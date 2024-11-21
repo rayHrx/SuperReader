@@ -1,7 +1,13 @@
-import React, { useState, useRef } from 'react';
-import { Book, ReadingDepth } from '../types';
-import { ChevronLeft, ChevronRight, Clock, BookOpen, BookOpenCheck } from 'lucide-react';
+'use client';
+
+import React, { useState, useRef, useCallback, useEffect } from 'react';
+import { Book, ReadingDepth } from '@/types';
+import { Clock, BookOpenCheck, BarChart2, Lightbulb } from 'lucide-react';
 import DepthControl from './DepthControl';
+import TextSettings from './TextSettings';
+import ContentSegment from './ContentSegment';
+import ReadingStats from './ReadingStats';
+import KeyInsights from './KeyInsights';
 import clsx from 'clsx';
 
 interface ReaderProps {
@@ -10,28 +16,87 @@ interface ReaderProps {
 
 export default function Reader({ book }: ReaderProps) {
   const [currentChapter, setCurrentChapter] = useState(0);
-  const [readingDepth, setReadingDepth] = useState<ReadingDepth>('condensed');
-  const [currentPage, setCurrentPage] = useState(1);
+  const [readingDepth, setReadingDepth] = useState<ReadingDepth>('original');
+  const [visiblePages, setVisiblePages] = useState<number[]>([1]);
+  const [activeSegment, setActiveSegment] = useState<number>(0);
+  const [fontSize, setFontSize] = useState('text-base');
+  const [fontFamily, setFontFamily] = useState('inter');
+  const [showStats, setShowStats] = useState(false);
+  const [showInsights, setShowInsights] = useState(false);
+  const [readingStats, setReadingStats] = useState({
+    readingStreak: 5,
+    pagesRead: 0,
+    bookmarks: 0,
+    notes: 0
+  });
+  
   const contentRef = useRef<HTMLDivElement>(null);
+  const pageRefs = useRef<Map<number, HTMLDivElement>>(new Map());
 
   const chapter = book.chapters[currentChapter];
-  const pages = chapter?.content[readingDepth] || [];
-  const totalPages = pages.length;
-
-  const handlePageChange = (newPage: number) => {
-    if (newPage >= 1 && newPage <= totalPages) {
-      setCurrentPage(newPage);
-      contentRef.current?.scrollTo({ top: 0, behavior: 'smooth' });
-    }
-  };
-
-  if (!chapter) {
+  if (!chapter?.content?.[readingDepth]) {
     return (
       <div className="flex items-center justify-center h-screen bg-gray-900">
         <div className="text-white">Loading...</div>
       </div>
     );
   }
+
+  const pages = chapter.content[readingDepth];
+  const totalPages = pages.length;
+
+  const registerPageRef = useCallback((pageNumber: number, element: HTMLDivElement | null) => {
+    if (element) {
+      pageRefs.current.set(pageNumber, element);
+    } else {
+      pageRefs.current.delete(pageNumber);
+    }
+  }, []);
+
+  const scrollToPage = useCallback((pageNumber: number) => {
+    const element = pageRefs.current.get(pageNumber);
+    if (element) {
+      element.scrollIntoView({
+        behavior: 'smooth',
+        block: 'start'
+      });
+    }
+  }, []);
+
+  useEffect(() => {
+    const observer = new IntersectionObserver(
+      (entries) => {
+        entries.forEach((entry) => {
+          const pageNumber = Number(entry.target.getAttribute('data-page'));
+          if (entry.isIntersecting) {
+            setVisiblePages((prev) => 
+              prev.includes(pageNumber) ? prev : [...prev, pageNumber].sort((a, b) => a - b)
+            );
+            setReadingStats(prev => ({
+              ...prev,
+              pagesRead: Math.max(prev.pagesRead, pageNumber)
+            }));
+          } else {
+            setVisiblePages((prev) => prev.filter(p => p !== pageNumber));
+          }
+        });
+      },
+      {
+        root: null,
+        threshold: 0.1,
+        rootMargin: '-20% 0px -20% 0px'
+      }
+    );
+
+    const currentRefs = Array.from(pageRefs.current.values());
+    currentRefs.forEach(element => {
+      if (element) {
+        observer.observe(element);
+      }
+    });
+
+    return () => observer.disconnect();
+  }, [readingDepth]);
 
   return (
     <div className="flex h-screen bg-gray-900 overflow-hidden">
@@ -45,9 +110,7 @@ export default function Reader({ book }: ReaderProps) {
             <span className="text-lg font-bold text-white">Pages</span>
           </div>
           <p className="text-sm text-gray-400">
-            Pages {chapter.content[readingDepth][0].pageNumber} - {
-              chapter.content[readingDepth][chapter.content[readingDepth].length - 1].pageNumber
-            }
+            {book.title} - {readingDepth} view
           </p>
         </div>
 
@@ -56,34 +119,25 @@ export default function Reader({ book }: ReaderProps) {
           {pages.map((page, index) => (
             <button
               key={index}
-              onClick={() => handlePageChange(index + 1)}
+              onClick={() => scrollToPage(index + 1)}
               className={clsx(
                 'w-full group relative transition-all',
-                currentPage === index + 1 ? 'ring-2 ring-blue-500' : ''
+                visiblePages.includes(index + 1) ? 'ring-2 ring-blue-500' : ''
               )}
             >
-              {/* Thumbnail Preview */}
-              <div className="aspect-[3/4] bg-gray-700 rounded-lg overflow-hidden">
-                <div className="p-3 transform scale-[0.4] origin-top-left">
-                  {page.content.map((paragraph, pIdx) => (
-                    <div
-                      key={pIdx}
-                      className="h-2 bg-gray-500 rounded mb-1 w-full"
-                      style={{
-                        width: `${Math.random() * 30 + 70}%`,
-                      }}
-                    />
-                  ))}
-                </div>
-                {/* Page Number & Range Overlay */}
-                <div className="absolute bottom-0 left-0 right-0 p-2 bg-gradient-to-t from-gray-900 to-transparent">
-                  <div className="text-xs text-white">Page {page.pageNumber}</div>
-                  {page.originalPageRange && (
-                    <div className="text-xs text-gray-400">
-                      Original: {page.originalPageRange.start}-{page.originalPageRange.end}
+              <div className="aspect-[3/4] bg-gray-700 rounded-lg overflow-hidden p-3">
+                <div className="text-xs text-white">Page {page.pageNumber}</div>
+                {readingDepth === 'original' ? (
+                  <div className="mt-2 text-xs text-gray-400 line-clamp-3">
+                    {page.content[0]}
+                  </div>
+                ) : (
+                  page.paragraphs && (
+                    <div className="mt-2 text-xs text-gray-400 line-clamp-3">
+                      {page.paragraphs[0].title}
                     </div>
-                  )}
-                </div>
+                  )
+                )}
               </div>
             </button>
           ))}
@@ -96,56 +150,119 @@ export default function Reader({ book }: ReaderProps) {
         <div className="bg-gray-800 border-b border-gray-700 p-4">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-4">
-              <button
-                onClick={() => setCurrentChapter(prev => Math.max(0, prev - 1))}
-                disabled={currentChapter === 0}
-                className="p-2 rounded-lg hover:bg-gray-700 disabled:opacity-50 text-gray-300"
-              >
-                <ChevronLeft className="w-5 h-5" />
-              </button>
               <div className="text-white">
-                <h2 className="text-lg font-semibold">{chapter.title}</h2>
+                <h2 className="text-lg font-semibold">{book.title}</h2>
                 <div className="text-sm text-gray-400">
-                  Page {currentPage} of {totalPages}
+                  Page {visiblePages.join(', ')} of {totalPages}
                 </div>
               </div>
-              <button
-                onClick={() => setCurrentChapter(prev => Math.min(book.chapters.length - 1, prev + 1))}
-                disabled={currentChapter === book.chapters.length - 1}
-                className="p-2 rounded-lg hover:bg-gray-700 disabled:opacity-50 text-gray-300"
-              >
-                <ChevronRight className="w-5 h-5" />
-              </button>
             </div>
-            <div className="flex items-center gap-2 text-gray-400">
-              <Clock className="w-4 h-4" />
-              <span>{chapter.estimatedReadTime[readingDepth]} min read</span>
+            <div className="flex items-center gap-4">
+              <button
+                onClick={() => setShowStats(!showStats)}
+                className="text-gray-400 hover:text-white transition-colors"
+                title="Show Reading Stats"
+              >
+                <BarChart2 className="w-5 h-5" />
+              </button>
+              <button
+                onClick={() => setShowInsights(!showInsights)}
+                className="text-gray-400 hover:text-white transition-colors"
+                title="Show Key Insights"
+              >
+                <Lightbulb className="w-5 h-5" />
+              </button>
+              <TextSettings
+                fontSize={fontSize}
+                fontFamily={fontFamily}
+                onFontSizeChange={setFontSize}
+                onFontFamilyChange={setFontFamily}
+              />
+              <DepthControl currentDepth={readingDepth} onChange={setReadingDepth} />
+              <div className="flex items-center gap-2 text-gray-400">
+                <Clock className="w-4 h-4" />
+                <span>{chapter.estimatedReadTime[readingDepth]} min</span>
+              </div>
             </div>
           </div>
         </div>
 
         {/* Reading Content */}
-        <div
-          ref={contentRef}
-          className="flex-1 overflow-y-auto p-8 bg-gray-900"
-        >
-          <div className="max-w-3xl mx-auto">
-            <div className="bg-gray-800 rounded-lg shadow-lg p-8">
-              {pages[currentPage - 1]?.content.map((paragraph, idx) => (
-                <p
-                  key={idx}
-                  className="text-gray-300 text-lg leading-relaxed mb-4 last:mb-0"
+        <div className="flex-1 flex overflow-hidden">
+          <div
+            ref={contentRef}
+            className="flex-1 overflow-y-auto p-8 bg-gray-900 scroll-smooth"
+          >
+            <div className="max-w-3xl mx-auto space-y-8">
+              {pages.map((page, pageIndex) => (
+                <div
+                  key={pageIndex}
+                  ref={(el) => registerPageRef(pageIndex + 1, el as HTMLDivElement)}
+                  data-page={pageIndex + 1}
+                  className="bg-gray-800 rounded-lg shadow-lg p-8"
                 >
-                  {paragraph}
-                </p>
+                  {readingDepth === 'original' ? (
+                    <div className={clsx(
+                      'text-gray-300 whitespace-pre-wrap',
+                      fontSize,
+                      {
+                        'font-serif': fontFamily === 'serif',
+                        'font-mono': fontFamily === 'mono',
+                        'font-sans': fontFamily === 'inter'
+                      }
+                    )}>
+                      {page.content.map((text, idx) => (
+                        <p key={idx} className="mb-4 last:mb-0">{text}</p>
+                      ))}
+                    </div>
+                  ) : (
+                    page.paragraphs?.map((paragraph, pIndex) => (
+                      <ContentSegment
+                        key={pIndex}
+                        title={paragraph.title}
+                        content={paragraph.content}
+                        pages={paragraph.pages}
+                        isActive={activeSegment === pIndex}
+                        fontSize={fontSize}
+                        fontFamily={fontFamily}
+                      />
+                    ))
+                  )}
+                  
+                  {/* Page Number */}
+                  <div className="mt-6 pt-4 border-t border-gray-700">
+                    <p className="text-sm text-gray-400">
+                      Page {page.pageNumber}
+                      {page.originalPageRange && readingDepth !== 'original' && (
+                        <span> (Original pages {page.originalPageRange.start}-{page.originalPageRange.end})</span>
+                      )}
+                    </p>
+                  </div>
+                </div>
               ))}
             </div>
           </div>
+
+          {/* Side Panels */}
+          {showStats && (
+            <ReadingStats
+              readingStreak={readingStats.readingStreak}
+              pagesRead={readingStats.pagesRead}
+              totalPages={totalPages}
+              bookmarks={readingStats.bookmarks}
+              notes={readingStats.notes}
+              onClose={() => setShowStats(false)}
+            />
+          )}
+          
+          {showInsights && (
+            <KeyInsights
+              paragraphs={pages.flatMap(p => p.paragraphs || [])}
+              onClose={() => setShowInsights(false)}
+            />
+          )}
         </div>
       </div>
-
-      {/* Reading Depth Control */}
-      <DepthControl currentDepth={readingDepth} onChange={setReadingDepth} />
     </div>
   );
 }

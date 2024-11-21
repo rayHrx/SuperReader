@@ -5,10 +5,23 @@ export interface PageRange {
   end: number;
 }
 
+export interface Paragraph {
+  title: string;
+  content: string;
+  pages: number[];
+}
+
+export interface DistilledPage {
+  start_page: number;
+  end_page: number;
+  paragraphs: Paragraph[];
+}
+
 export interface Page {
   content: string[];
   pageNumber: number;
   originalPageRange?: PageRange;
+  paragraphs?: Paragraph[];
 }
 
 export interface ChapterContent {
