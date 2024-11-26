@@ -38,7 +38,8 @@ async def get_content_section_range_handler(book_id:str, page_num:int,
   
   return GetContentSectionRangeResponse(start_page=content_section.start_page, end_page=content_section.end_page)
 
-@content_section_router.get("/content_sections", tags=["ContentSection"])
+
+@content_section_router.get("/content_section", tags=["ContentSection"])
 @inject
 async def get_all_content_sections_handler(book_id:str,
   content_section_repository: BookContentSectionRepository = Depends(lambda: Container.book_content_section_repository()),
@@ -46,5 +47,5 @@ async def get_all_content_sections_handler(book_id:str,
   """
   Get all content sections for a page range
   """
-  content_sections = content_section_repository.get_all(book_id, user_info.user_id)
+  content_sections = content_section_repository.get_all(book_id, user_info.user_id, exclude_pages=True)
   return GetAllContentSectionsResponse(content_sections=content_sections)
