@@ -4,6 +4,7 @@ import React, { useState } from 'react';
 import { Menu, X, Home, Library, User, BookOpenCheck } from 'lucide-react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
+import { useAuth } from '@/lib/AuthContext';
 import clsx from 'clsx';
 
 interface LayoutProps {
@@ -13,32 +14,60 @@ interface LayoutProps {
 export default function Layout({ children }: LayoutProps) {
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const pathname = usePathname();
+  const { user } = useAuth();
+
+  // If user is not authenticated, don't render the layout
+  if (!user) {
+    return null;
+  }
 
   const navItems = [
-    { path: '/', label: 'Home', icon: Home },
+    { path: '/', label: 'Dashboard', icon: Home },
     { path: '/library', label: 'Library', icon: Library },
     { path: '/account', label: 'Account', icon: User },
   ];
 
-  return (
-    <div className="min-h-screen bg-gray-900">
-      {/* Sidebar Toggle Button */}
-      <button
-        onClick={() => setIsSidebarOpen(!isSidebarOpen)}
-        className="fixed top-4 left-4 z-50 p-2 bg-gray-800 rounded-lg shadow-lg hover:bg-gray-700 text-gray-300"
-      >
-        {isSidebarOpen ? <X className="w-6 h-6" /> : <Menu className="w-6 h-6" />}
-      </button>
+  // Get current page title
+  const currentPage = navItems.find(item => item.path === pathname)?.label || '';
 
-      {/* App Logo - Only show when sidebar is closed */}
-      {!isSidebarOpen && (
-        <div className="fixed top-4 left-16 z-40 flex items-center gap-2">
-          <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-blue-500 to-blue-700 flex items-center justify-center shadow-lg">
-            <BookOpenCheck className="w-5 h-5 text-white" />
-          </div>
-          <span className="text-lg font-bold text-white">SpeedReader</span>
+  return (
+    <div className="max-h-screen bg-gray-900 flex flex-col">
+      {/* Fixed Header */}
+      <div className="h-16 z-40 flex items-center bg-gray-800 shadow-lg px-4 flex-shrink-0">
+        {/* Left section */}
+        <div className="flex-1 flex items-center">
+          <button
+            onClick={() => setIsSidebarOpen(!isSidebarOpen)}
+            className="p-2 bg-gray-700 rounded-lg shadow-lg hover:bg-gray-600 text-gray-300 z-50"
+          >
+            {isSidebarOpen ? <X className="w-6 h-6" /> : <Menu className="w-6 h-6" />}
+          </button>
+          <h1 className="ml-4 text-xl font-semibold text-white">{currentPage}</h1>
         </div>
-      )}
+
+        {/* Center logo */}
+        <div className="flex-1 flex justify-center">
+          <Link
+            href="/"
+            className="hover:opacity-80 transition-opacity"
+          >
+            <div className="w-auto px-3 h-10 rounded-lg bg-gradient-to-br from-blue-500 to-blue-700 flex items-center justify-center gap-2">
+              <BookOpenCheck className="w-6 h-6 text-white" />
+              <span className="text-white">SuperReader</span>
+            </div>
+          </Link>
+        </div>
+
+        {/* Right section */}
+        <div className="flex-1 flex justify-end items-center pr-2" style={{justifyContent: "end"}}>
+          <Link
+            href="/account"
+            className="p-2 bg-gray-700 rounded-lg shadow-lg hover:bg-gray-600 text-gray-300 transition-colors"
+          >
+            <User className="w-6 h-6" />
+          </Link>
+        </div>
+      </div>
 
       {/* Sidebar */}
       <div
@@ -85,7 +114,7 @@ export default function Layout({ children }: LayoutProps) {
       )}
 
       {/* Main Content */}
-      <main className="pt-16">{children}</main>
+      <main className="flex-grow overflow-auto">{children}</main>
     </div>
   );
 }

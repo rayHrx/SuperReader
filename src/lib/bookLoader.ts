@@ -21,7 +21,7 @@ interface BookData {
 }
 
 const fallbackBook: Book = {
-  id: 1,
+  id: "1",
   title: "The Psychology of Money",
   author: "Morgan Housel",
   coverUrl: "https://images.unsplash.com/photo-1553729459-efe14ef6055d?auto=format&fit=crop&q=80&w=2070",
@@ -111,7 +111,7 @@ export async function loadBookData(): Promise<Book> {
     };
 
     const book: Book = {
-      id: 1,
+      id: "1",
       title: "The Psychology of Money",
       author: "Morgan Housel",
       coverUrl: "https://images.unsplash.com/photo-1553729459-efe14ef6055d?auto=format&fit=crop&q=80&w=2070",

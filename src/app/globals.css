@@ -16,3 +16,39 @@ body {
     rgb(var(--background-end-rgb))
   );
 }
+
+/* Add these classes to hide scrollbars while maintaining scroll functionality */
+.scrollbar-hide {
+  -ms-overflow-style: none;  /* IE and Edge */
+  scrollbar-width: none;  /* Firefox */
+}
+
+.scrollbar-hide::-webkit-scrollbar {
+  display: none;  /* Chrome, Safari and Opera */
+}
+
+/* PDF viewer styles */
+.pdf-container {
+  width: 100%;
+  max-width: 100%;
+}
+
+.pdf-page {
+  width: 100% !important;
+  height: auto !important;
+  background-color: white;
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.pdf-page > canvas {
+  width: 100% !important;
+  height: auto !important;
+}
+
+/* Add styles for PDF text layer */
+.react-pdf__Page__textContent {
+  height: auto !important;
+  width: 100% !important;
+  transform: none !important;
+}

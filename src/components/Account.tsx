@@ -10,8 +10,12 @@ import {
   BookOpenCheck,
   User,
   Mail,
-  Calendar
+  Calendar,
+  Chrome
 } from 'lucide-react';
+import { useAuth } from '@/lib/AuthContext';
+import { auth } from '@/lib/firebase';
+import { useRouter } from 'next/navigation';
 
 interface MenuItem {
   icon: React.ReactNode;
@@ -21,25 +25,37 @@ interface MenuItem {
 }
 
 export default function Account() {
+  const { user } = useAuth();
+  const router = useRouter();
+
+  const handleLogout = async () => {
+    try {
+      await auth.signOut();
+      router.push('/welcome');
+    } catch (error) {
+      console.error('Error signing out:', error);
+    }
+  };
+
   const menuItems: MenuItem[] = [
-    {
-      icon: <Settings className="w-5 h-5" />,
-      label: 'Settings',
-      description: 'App preferences and account settings',
-      onClick: () => console.log('Settings clicked'),
-    },
-    {
-      icon: <Bell className="w-5 h-5" />,
-      label: 'Notifications',
-      description: 'Manage your notification preferences',
-      onClick: () => console.log('Notifications clicked'),
-    },
-    {
-      icon: <Shield className="w-5 h-5" />,
-      label: 'Privacy',
-      description: 'Control your privacy settings',
-      onClick: () => console.log('Privacy clicked'),
-    },
+    // {
+    //   icon: <Settings className="w-5 h-5" />,
+    //   label: 'Settings',
+    //   description: 'App preferences and account settings',
+    //   onClick: () => console.log('Settings clicked'),
+    // },
+    // {
+    //   icon: <Bell className="w-5 h-5" />,
+    //   label: 'Notifications',
+    //   description: 'Manage your notification preferences',
+    //   onClick: () => console.log('Notifications clicked'),
+    // },
+    // {
+    //   icon: <Shield className="w-5 h-5" />,
+    //   label: 'Privacy',
+    //   description: 'Control your privacy settings',
+    //   onClick: () => console.log('Privacy clicked'),
+    // },
     {
       icon: <HelpCircle className="w-5 h-5" />,
       label: 'Help & Support',
@@ -48,31 +64,46 @@ export default function Account() {
     },
   ];
 
+  if (!user) {
+    router.push('/welcome');
+    return null;
+  }
+
   return (
     <div className="max-w-2xl mx-auto px-4 py-8">
-      <div className="flex items-center gap-3 mb-8">
-        <div className="w-10 h-10 rounded-lg bg-gradient-to-br from-blue-500 to-blue-700 flex items-center justify-center">
-          <BookOpenCheck className="w-6 h-6 text-white" />
-        </div>
-        <h1 className="text-3xl font-bold text-white">Account</h1>
-      </div>
 
       {/* Profile Section */}
       <div className="bg-gray-800 rounded-lg p-6 mb-8">
         <div className="flex items-center gap-4">
           <div className="w-16 h-16 rounded-full bg-gray-700 flex items-center justify-center">
-            <User className="w-8 h-8 text-gray-400" />
+            {user.photoURL ? (
+              <img
+                src={user.photoURL}
+                alt={user.displayName || 'Profile'}
+                className="w-16 h-16 rounded-full"
+              />
+            ) : (
+              <User className="w-8 h-8 text-gray-400" />
+            )}
           </div>
           <div>
-            <h2 className="text-xl font-semibold text-white">John Doe</h2>
+            <h2 className="text-xl font-semibold text-white">
+              {user.displayName || 'Anonymous User'}
+            </h2>
             <div className="flex items-center gap-2 text-gray-400">
               <Mail className="w-4 h-4" />
-              <span>john.doe@example.com</span>
+              <span>{user.email}</span>
             </div>
             <div className="flex items-center gap-2 text-gray-400 mt-1">
               <Calendar className="w-4 h-4" />
-              <span>Member since March 2024</span>
+              <span>Member since {new Date(user.metadata.creationTime!).toLocaleDateString()}</span>
             </div>
+            {user.providerData[0].providerId === 'google.com' && (
+              <div className="flex items-center gap-2 text-gray-400 mt-1">
+                <Chrome className="w-4 h-4" />
+                <span>Google Account</span>
+              </div>
+            )}
           </div>
         </div>
       </div>
@@ -97,7 +128,7 @@ export default function Account() {
 
         {/* Logout Button */}
         <button
-          onClick={() => console.log('Logout clicked')}
+          onClick={handleLogout}
           className="w-full mt-4 bg-red-600 text-white rounded-lg p-4 flex items-center gap-4 hover:bg-red-700 transition-colors"
         >
           <LogOut className="w-5 h-5" />
