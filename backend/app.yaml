@@ -1,0 +1,16 @@
+runtime: python39
+instance_class: F1
+env_variables:
+  BOOK_BUCKET_NAME: "superreader-book-bucket"
+  BOOK_FIRESTORE_COLLECTION: "BookInfo"
+  BOOK_CONTENT_SECTION_FIRESTORE_COLLECTION: "BookContentSection"
+  BOOK_DISTILLED_PAGE_FIRESTORE_COLLECTION: "BookDistilledPage"
+  CONTENT_DISTILL_PUBSUB_TOPIC: "projects/superreader-442520/topics/content-distill-processing"
+  CONTENT_DISTILL_PUBSUB_SUBSCRIPTION: "projects/superreader-442520/subscriptions/content-distill-processing-sub"
+  GCP_SERVICE_ACCOUNT_PATH: ""
+  GCP_SERVICE_ACCOUNT_JSON: ""
+  GCP_SERVICE_ACCOUNT_LOADING_MODE: "default"
+  OPEN_AI_API_KEY: ""
+  GCP_SERVICE_ACCOUNT_EMAIL: "api-519@superreader-442520.iam.gserviceaccount.com"
+
+entrypoint: uvicorn api.fast_api:app --workers 2 --host 0.0.0.0 --port $PORT
