@@ -32,5 +32,5 @@ class FirebaseBookRepository(BookRepository):
     return None
 
   def list(self, user_id: str) -> List[Book]:
-    docs = self._collection.where('user_id', '==', user_id).select(['id', 'title']).get()
+    docs = self._collection.where('user_id', '==', user_id).get()
     return [Book(**doc.to_dict()) for doc in docs]

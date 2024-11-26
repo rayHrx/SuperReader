@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 from fastapi import APIRouter, Response, Depends, status, HTTPException
 
 from api.settings import Settings
-from api.models.book import GetBookResponse, PostBookRequest, PostBookResponse, SetBookUploadedRequest
+from api.models.book import GetBookResponse, ListBooksResponse, PostBookRequest, PostBookResponse, SetBookUploadedRequest
 from container.prod import Container
 from file_service.base import FileService
 from message_broker.pubsub_message_broker import MessageBroker
@@ -69,6 +69,14 @@ async def get_book_handler(
     book_id=book.id,
     download_url=download_url
   )
+
+
+@book_router.get("/book", tags=["Book"], status_code=200)
+async def get_books_handler(
+  book_repository: BookRepository = Depends(lambda: Container.book_repository()),
+  user_info:UserInfo = Depends(lambda: Container.token_decoder())):
+
+  return ListBooksResponse(books=book_repository.list(user_info.user_id))
 
 
 @book_router.patch("/set_book_uploaded", tags=["Book"], status_code=200)
