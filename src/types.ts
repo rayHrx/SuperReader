@@ -47,9 +47,10 @@ export interface Chapter {
 }
 
 export interface Book {
-  id: number;
+  id: string;
   title: string;
   author: string;
   coverUrl: string;
+  pdfUrl?: string;
   chapters: Chapter[];
 }
