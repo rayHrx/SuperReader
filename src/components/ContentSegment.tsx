@@ -4,15 +4,20 @@ import React from 'react';
 import clsx from 'clsx';
 
 interface ContentSegmentProps {
-  title: string;
+  title?: string;
   content: string;
-  pages: number[];
-  isActive: boolean;
-  fontSize: string;
-  fontFamily: string;
-  originalContent: string[];
-  isShowingOriginal: boolean;
-  onToggleView: () => void;
+  pages?: number[];
+  isActive?: boolean;
+  fontSize?: string;
+  fontFamily?: string;
+  originalContent?: string[];
+  isShowingOriginal?: boolean;
+  onToggleView?: () => void;
+  isPageIndicator?: boolean;
+  pageNumber?: number;
+  isPartOfCondensed?: boolean;
+  onNavigateToCondensed?: () => void;
+  condensedPageRange?: string;
 }
 
 export default function ContentSegment({
@@ -24,32 +29,61 @@ export default function ContentSegment({
   fontFamily,
   originalContent,
   isShowingOriginal,
-  onToggleView
+  onToggleView,
+  isPageIndicator,
+  pageNumber,
+  isPartOfCondensed,
+  onNavigateToCondensed,
+  condensedPageRange,
 }: ContentSegmentProps) {
+  if (isPageIndicator) {
+    return (
+      <div className="relative px-6 py-4 my-4 rounded-lg transition-all duration-200 bg-gray-800/30">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-4">
+            <span className="text-gray-400">Page {pageNumber}</span>
+            {isPartOfCondensed && (
+              <div className="flex items-center gap-1">
+                <span className="text-xs px-2 py-1 rounded-full bg-blue-500/20 text-blue-400 flex items-center gap-1">
+                  Condensed Section {condensedPageRange}
+                  <SwitchIcon className="w-4 h-4" />
+                </span>
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="relative px-6 py-4 sm:py-8 my-4 sm:my-8 first:mt-0 rounded-lg transition-all duration-200 hover:bg-gray-900/20">
       <div className="absolute left-0 top-0 h-full w-1 rounded-l-lg bg-blue-500/30" />
-      
+
       <header className="mb-4 sm:mb-6 flex flex-col sm:flex-row sm:justify-between sm:items-start gap-4">
         <div>
-          <h2 className="text-lg sm:text-xl font-semibold tracking-tight text-gray-300">
-            {title}
-          </h2>
-          <div className="flex items-center gap-2 mt-2">
-            <div className="text-xs sm:text-sm text-gray-500">
-              From Original Pages {pages.join(', ')}
+          {title && (
+            <h2 className="text-lg sm:text-xl font-semibold tracking-tight text-gray-300">
+              {title}
+            </h2>
+          )}
+          {pages && (
+            <div className="flex items-center gap-2 mt-2">
+              <div className="text-xs sm:text-sm text-gray-500">
+                From Original Pages {pages.join(", ")}
+              </div>
             </div>
-          </div>
+          )}
         </div>
-        
+
         <div className="flex gap-2 self-end sm:self-auto">
           {originalContent && onToggleView && (
-            <button 
+            <button
               onClick={onToggleView}
               className={clsx(
                 "p-1.5 sm:p-2 rounded-full",
-                isShowingOriginal 
-                  ? "text-blue-400 bg-blue-500/10 hover:bg-blue-500/20" 
+                isShowingOriginal
+                  ? "text-blue-400 bg-blue-500/10 hover:bg-blue-500/20"
                   : "text-gray-400 hover:text-gray-200 hover:bg-gray-800"
               )}
               title={isShowingOriginal ? "Show Summary" : "Show Original"}
@@ -66,17 +100,19 @@ export default function ContentSegment({
         </div>
       </header>
 
-      <div className={clsx(
-        'prose prose-invert max-w-none',
-        'leading-relaxed whitespace-pre-wrap text-gray-300',
-        fontSize,
-        {
-          'font-serif': fontFamily === 'serif',
-          'font-mono': fontFamily === 'mono',
-          'font-sans': fontFamily === 'inter',
-        }
-      )}>
-        {isShowingOriginal ? originalContent?.join('\n\n') : content}
+      <div
+        className={clsx(
+          "prose prose-invert max-w-none",
+          "leading-relaxed whitespace-pre-wrap text-gray-300",
+          fontSize,
+          {
+            "font-serif": fontFamily === "serif",
+            "font-mono": fontFamily === "mono",
+            "font-sans": fontFamily === "inter",
+          }
+        )}
+      >
+        {isShowingOriginal ? originalContent?.join("\n\n") : content}
       </div>
     </div>
   );

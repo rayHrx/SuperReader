@@ -1,3 +1,5 @@
+"use client";
+
 import { Capacitor } from '@capacitor/core';
 import { CapacitorSQLite, SQLiteConnection, SQLiteDBConnection } from '@capacitor-community/sqlite';
 import { CacheModel } from './CacheModel';
@@ -10,6 +12,7 @@ import {
   DistilledContentResponse,
   ContentSectionResponse,
   PostBookResponse,
+  AllContentSectionsResponse,
   AppConfig
 } from './Interfaces';
 import { defineCustomElements as jeepSqlite } from 'jeep-sqlite/loader';
@@ -85,7 +88,7 @@ export class APIs {
     return this.cacheController.getData(
       `book_${bookId}`,
       () => this.fetchFromAPI(`/book/${bookId}`),
-      60 * 60 * 1000 // Cache for 1 hour
+      1
     );
   }
 
@@ -101,16 +104,25 @@ export class APIs {
     return this.cacheController.getData(
       `distilled_content_${bookId}_${startPage}_${endPage}`,
       () => this.fetchFromAPI(`/get_distilled_content?book_id=${bookId}&start_page=${startPage}&end_page=${endPage}`),
-      30 * 60 * 1000 // Cache for 30 minutes
+      24 * 60 * 60 * 1000 // Cache for 24 hours
     );
   }
 
-  // Content section endpoints
+  // Content section endpoints of a page
   async getContentSection(bookId: string, pageNum: number): Promise<ContentSectionResponse> {
     return this.cacheController.getData(
       `content_section_${bookId}_${pageNum}`,
       () => this.fetchFromAPI(`/get_content_section?book_id=${bookId}&page_num=${pageNum}`),
-      30 * 60 * 1000 // Cache for 30 minutes
+      24 * 60 * 60 * 1000 // Cache for 24 hours
+    );
+  }
+
+  // Get all content sections from a book
+  async getAllContentSections(bookId: string): Promise<AllContentSectionsResponse> {
+    return this.cacheController.getData(
+      `all_content_sections_${bookId}`,
+      () => this.fetchFromAPI(`/content_section?book_id=${bookId}`),
+      24 * 60 * 60 * 1000 // Cache for 24 hours
     );
   }
 

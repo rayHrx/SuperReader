@@ -33,16 +33,28 @@ export interface ChapterContent {
 export interface Chapter {
   id: number;
   title: string;
-  content: ChapterContent;
+  content: {
+    original: number[];
+    condensed: number[];
+    quick: number[];
+  };
   estimatedReadTime: {
     original: number;
     condensed: number;
-    quick: number;
+    quick: number | null;
   };
   totalPages: {
     original: number;
     condensed: number;
-    quick: number;
+    quick: number | null;
+  };
+}
+
+export interface PageMapping {
+  condensedSection: number;
+  pageRange: {
+    start: number;
+    end: number;
   };
 }
 
@@ -51,6 +63,6 @@ export interface Book {
   title: string;
   author: string;
   coverUrl: string;
-  pdfUrl?: string;
+  pdfUrl: string;
   chapters: Chapter[];
 }

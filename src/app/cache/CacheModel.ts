@@ -37,7 +37,7 @@ export class CacheModel {
       'SELECT value FROM cache WHERE key = ? AND (expiration > ? OR expiration IS NULL)',
       [key, Date.now()]
     );
-
+    console.log(`------- Expiration in ${result.values[0]?.expiration}`)
     if (result.values && result.values.length > 0) {
       const row = result.values[0] as { value: string };
       return row.value;

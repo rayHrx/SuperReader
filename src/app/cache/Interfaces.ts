@@ -36,7 +36,16 @@ export interface DistilledContentResponse {
 
 export interface ContentSectionResponse {
   // Define content section response structure
-  section: string;
+  book_id: string;
+  user_id: string;
+  start_page: number;
+  end_page: number;
+  pages: number[];
+}
+
+export interface AllContentSectionsResponse {
+  // Define all content sections response structure
+  content_sections: ContentSectionResponse[];
   // Add other properties
 }
 

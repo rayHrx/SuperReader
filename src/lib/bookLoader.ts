@@ -1,6 +1,4 @@
 import { Book, Chapter, Paragraph } from '@/types';
-import path from 'path';
-import { promises as fs } from 'fs';
 
 interface BookDataPage {
   page_num: number;
@@ -40,13 +38,13 @@ const fallbackBook: Book = {
 
 export async function loadBookData(): Promise<Book> {
   try {
-    const dataDirectory = path.join(process.cwd(), 'public');
-    const fileContents = await fs.readFile(
-      path.join(dataDirectory, 'book_data.json'),
-      'utf8'
-    );
+    // Fetch the JSON file from the public directory
+    const response = await fetch('/book_data.json');
+    if (!response.ok) {
+      throw new Error('Failed to fetch book data');
+    }
     
-    const data: BookData = JSON.parse(fileContents);
+    const data: BookData = await response.json();
     const bookTitle = "The psychology of money";
     const bookData = data[bookTitle];
 
