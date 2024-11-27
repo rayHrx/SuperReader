@@ -1,6 +1,6 @@
 from abc import ABC, abstractmethod
 from typing import List
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class Page(BaseModel):
@@ -12,7 +12,7 @@ class BookContentSection(BaseModel):
   user_id: str
   start_page:int
   end_page:int
-  pages: List[Page]
+  pages: List[Page] = Field(default_factory=list)
 
 class BookContentSectionRepository(ABC):
   @abstractmethod
@@ -36,5 +36,5 @@ class BookContentSectionRepository(ABC):
     pass
 
   @abstractmethod
-  def get_all(self, book_id:str, user_id:str = None) -> List[BookContentSection]:
+  def get_all(self, book_id:str, user_id:str = None, exclude_pages:bool = False) -> List[BookContentSection]:
     pass

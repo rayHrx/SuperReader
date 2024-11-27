@@ -65,9 +65,17 @@ class FirebaseBookContentSectionRepository(BookContentSectionRepository):
     return BookContentSection(**docs[0].to_dict())
 
 
-  def get_all(self, book_id:str, user_id:str = None) -> List[BookContentSection]:
+  def get_all(self, book_id:str, user_id:str = None, exclude_pages:bool = False) -> List[BookContentSection]:
+    fields = ['id', 'book_id', 'user_id', 'start_page', 'end_page']
     if user_id:
-      docs = self._collection.where('book_id', '==', book_id).where('user_id', '==', user_id).get()
+      if exclude_pages:
+        docs = self._collection.where('book_id', '==', book_id).where('user_id', '==', user_id).select(fields).get()
+      else:
+        docs = self._collection.where('book_id', '==', book_id).where('user_id', '==', user_id).get()
     else:
-      docs = self._collection.where('book_id', '==', book_id).get()
-    return [BookContentSection(**doc.to_dict()) for doc in docs]
+      if exclude_pages:
+        docs = self._collection.where('book_id', '==', book_id).select(fields).get()
+      else:
+        docs = self._collection.where('book_id', '==', book_id).get()
+    
+    return [BookContentSection.model_validate(doc.to_dict()) for doc in docs]
