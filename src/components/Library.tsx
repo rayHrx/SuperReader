@@ -1,14 +1,14 @@
 'use client';
 
-import React, { useState } from 'react';
-import Link from 'next/link';
-import { Upload, Trash2, BookOpen, Gauge, Clock } from 'lucide-react';
-import { Book } from '@/types';
+import React, { useState, useEffect } from "react";
+import Link from "next/link";
+import { Upload, Trash2, BookOpen, Gauge, Clock } from "lucide-react";
+import { Book } from "@/types";
 import { useAPIs } from "@/app/cache/useAPIs";
 import { PostBookResponse } from "@/app/cache/Interfaces";
 
 interface LibraryProps {
-  initialBook: Book;
+  initialBooks?: Book[];
 }
 
 interface UploadingBook {
@@ -22,74 +22,93 @@ interface UploadingBook {
 }
 
 function calculateCompressionScore(book: Book) {
-  const originalPages = book.chapters.reduce(
-    (sum, chapter) => sum + chapter.content.original.length,
-    0
-  );
-  const condensedPages = book.chapters.reduce(
-    (sum, chapter) => sum + chapter.content.condensed.length,
-    0
-  );
-
-  const score = Math.round(
-    ((originalPages - condensedPages) / originalPages) * 100
-  );
-  const originalTime = book.chapters.reduce(
-    (sum, chapter) => sum + chapter.estimatedReadTime.original,
-    0
-  );
-  const condensedTime = book.chapters.reduce(
-    (sum, chapter) => sum + chapter.estimatedReadTime.condensed,
-    0
-  );
-
-  return { score, originalTime, condensedTime };
+  return {
+    score: book.compression_ratio ?? 0,
+    originalTime: 10,
+    condensedTime: 1,
+  };
 }
 
-export default function Library({ initialBook }: LibraryProps) {
-  const [books, setBooks] = useState<Book[]>([initialBook]);
+export default function Library({ initialBooks = [] }: LibraryProps) {
+  const [books, setBooks] = useState<Book[]>(initialBooks);
   const [isDragging, setIsDragging] = useState(false);
   const [uploadingBooks, setUploadingBooks] = useState<UploadingBook[]>([]);
   const { apis, isInitialized } = useAPIs();
   const fileInputRef = React.useRef<HTMLInputElement>(null);
 
-  const processFiles = async (files: File[]) => {
-    const newUploadingBooks = files.map((file) => ({
-      file,
-      isUploading: false,
-      uploadProgress: 0,
-    }));
+  useEffect(() => {
+    const fetchBooks = async () => {
+      if (!apis) return;
 
-    setUploadingBooks((prev) => [...prev, ...newUploadingBooks]);
-
-    for (const uploadingBook of newUploadingBooks) {
       try {
-        const bookRequest = {
-          type: uploadingBook.file.name.toLowerCase().endsWith(".pdf")
-            ? "pdf"
-            : "epub",
-        };
+        await apis.initialize();
 
-        const response: PostBookResponse = await apis!.postBook(bookRequest);
-
-        setUploadingBooks((prev) =>
-          prev.map((book) =>
-            book === uploadingBook
-              ? {
-                  ...book,
-                  bookId: response.book_id,
-                  uploadUrl: response.upload_url,
-                }
-              : book
-          )
-        );
+        const response = await apis.getBooks();
+        const uploadedBooks = response.books
+          .filter((book) => book.is_uploaded)
+          .map((book) => ({
+            id: book.id,
+            title: book.title || "Empty Book Name",
+            coverUrl:
+              "https://images.unsplash.com/photo-1589998059171-988d887df646?w=800&auto=format&fit=crop&q=60",
+            compression_ratio: book.compression_ratio ?? 0,
+            chapters: [],
+          }));
+        setBooks(uploadedBooks);
       } catch (error) {
-        console.error("Error getting upload URL:", error);
-        // Remove the failed book from uploading list
-        setUploadingBooks((prev) =>
-          prev.filter((book) => book !== uploadingBook)
-        );
+        console.error("Error fetching books:", error);
       }
+    };
+
+    if (isInitialized) {
+      fetchBooks();
+    }
+  }, [apis, isInitialized]);
+
+  const processFiles = async (files: File[]) => {
+    if (!apis) return;
+
+    try {
+      await apis.initialize();
+
+      const newUploadingBooks = files.map((file) => ({
+        file,
+        isUploading: false,
+        uploadProgress: 0,
+      }));
+
+      setUploadingBooks((prev) => [...prev, ...newUploadingBooks]);
+
+      for (const uploadingBook of newUploadingBooks) {
+        try {
+          const bookRequest = {
+            type: uploadingBook.file.name.toLowerCase().endsWith(".pdf")
+              ? "pdf"
+              : "epub",
+          };
+
+          const response: PostBookResponse = await apis.postBook(bookRequest);
+
+          setUploadingBooks((prev) =>
+            prev.map((book) =>
+              book === uploadingBook
+                ? {
+                    ...book,
+                    bookId: response.book_id,
+                    uploadUrl: response.upload_url,
+                  }
+                : book
+            )
+          );
+        } catch (error) {
+          console.error("Error getting upload URL:", error);
+          setUploadingBooks((prev) =>
+            prev.filter((book) => book !== uploadingBook)
+          );
+        }
+      }
+    } catch (error) {
+      console.error("Error initializing API:", error);
     }
   };
 
@@ -351,12 +370,9 @@ export default function Library({ initialBook }: LibraryProps) {
       {/* Book Grid */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
         {books.map((book) => {
-          const { score, originalTime, condensedTime } =
-            calculateCompressionScore(book);
-          const timeSaved = originalTime - condensedTime;
-          const progressPercentage = Math.round(
-            (condensedTime / originalTime) * 100
-          );
+          const { score } = calculateCompressionScore(book);
+          const timeSaved = 0;
+          const progressPercentage = 30;
 
           return (
             <div
@@ -374,7 +390,6 @@ export default function Library({ initialBook }: LibraryProps) {
                   <h3 className="text-xl font-bold text-white mb-1">
                     {book.title}
                   </h3>
-                  <p className="text-gray-300">{book.author}</p>
                 </div>
               </div>
 
@@ -386,9 +401,7 @@ export default function Library({ initialBook }: LibraryProps) {
                       <Gauge className="w-4 h-4 text-blue-400" />
                       <span className="text-sm text-gray-400">Compression</span>
                     </div>
-                    <div className="text-lg font-semibold text-white">
-                      {score}% reduced
-                    </div>
+                    <div className="text-lg font-semibold text-white">30%</div>
                   </div>
                   <div className="bg-gray-700/50 rounded-lg p-3">
                     <div className="flex items-center gap-2 mb-2">
@@ -405,9 +418,7 @@ export default function Library({ initialBook }: LibraryProps) {
                 <div className="bg-gray-700/30 rounded-lg p-3 mb-4">
                   <div className="flex justify-between text-sm text-gray-400">
                     <span>Reading Time</span>
-                    <span>
-                      {originalTime}m → {condensedTime}m
-                    </span>
+                    <span>10m → 1m</span>
                   </div>
                 </div>
 

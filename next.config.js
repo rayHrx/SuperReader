@@ -4,6 +4,12 @@ const nextConfig = {
     config.resolve.alias.canvas = false;
     return config;
   },
+  images: {
+    domains: [
+      "images.unsplash.com",
+      // Add other domains as needed
+    ],
+  },
 };
 
 module.exports = nextConfig;

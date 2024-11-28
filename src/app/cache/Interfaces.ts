@@ -75,3 +75,35 @@ export interface AppConfig {
   key: string;
   value: any;
 }
+
+export interface Book {
+  id: string;
+  title: string;
+  type: string;
+  user_id: string;
+  created_datetime: string;
+  is_uploaded: boolean;
+  progress: number;
+  content_section_generated: boolean;
+  total_page: number | null;
+  compression_ratio: number | null;
+}
+
+export interface GetBooksResponse {
+  books: Book[];
+}
+
+// Add these new interfaces after the existing ones
+export interface CheckIn {
+  user_id: string;
+  created_datetime: string;
+}
+
+export interface DailyCheckIn {
+  date: string;
+  checked_in: boolean;
+}
+
+export interface GetLastNCheckInResponse {
+  check_ins: CheckIn[];
+}

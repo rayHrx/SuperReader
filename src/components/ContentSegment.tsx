@@ -18,6 +18,7 @@ interface ContentSegmentProps {
   isPartOfCondensed?: boolean;
   onNavigateToCondensed?: () => void;
   condensedPageRange?: string;
+  chapterNumber?: number;
 }
 
 export default function ContentSegment({
@@ -35,6 +36,7 @@ export default function ContentSegment({
   isPartOfCondensed,
   onNavigateToCondensed,
   condensedPageRange,
+  chapterNumber,
 }: ContentSegmentProps) {
   if (isPageIndicator) {
     return (
@@ -43,12 +45,15 @@ export default function ContentSegment({
           <div className="flex items-center gap-4">
             <span className="text-gray-400">Page {pageNumber}</span>
             {isPartOfCondensed && (
-              <div className="flex items-center gap-1">
-                <span className="text-xs px-2 py-1 rounded-full bg-blue-500/20 text-blue-400 flex items-center gap-1">
-                  Condensed Section {condensedPageRange}
+              <button
+                onClick={onNavigateToCondensed}
+                className="flex items-center gap-1 group"
+              >
+                <span className="text-xs px-2 py-1 rounded-full bg-blue-500/20 text-blue-400 flex items-center gap-1 group-hover:bg-blue-500/30">
+                  Chapter {chapterNumber} • Pages {condensedPageRange}
                   <SwitchIcon className="w-4 h-4" />
                 </span>
-              </div>
+              </button>
             )}
           </div>
         </div>

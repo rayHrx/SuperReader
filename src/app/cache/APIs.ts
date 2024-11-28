@@ -13,7 +13,11 @@ import {
   ContentSectionResponse,
   PostBookResponse,
   AllContentSectionsResponse,
-  AppConfig
+  AppConfig,
+  GetBooksResponse,
+  CheckInResponse,
+  DailyCheckIn,
+  GetLastNCheckInResponse
 } from './Interfaces';
 import { defineCustomElements as jeepSqlite } from 'jeep-sqlite/loader';
 import { getAuth } from 'firebase/auth';
@@ -115,10 +119,9 @@ export class APIs {
     return response as BookResponse;
   }
 
-  async setBookUploaded(request: SetBookUploadedRequest): Promise<void> {
-    await this.fetchFromAPI('/set_book_uploaded', {
+  async setBookUploaded(bookId: string): Promise<void> {
+    await this.fetchFromAPI('/book/${bookId}', {
       method: 'PATCH',
-      body: JSON.stringify(request),
     });
   }
 
@@ -217,5 +220,33 @@ export class APIs {
 
   async removeAppConfig(key: string): Promise<void> {
     await this.cacheController.invalidateCache(`app_config_${key}`);
+  }
+
+  // Get all books
+  async getBooks(): Promise<GetBooksResponse> {
+    const response = await this.cacheController.getData(
+      'all_books',
+      () => this.fetchFromAPI<GetBooksResponse>('/book'),
+      5 * 60 * 1000 // Cache for 5 minutes
+    );
+    return response as GetBooksResponse;
+  }
+
+  // Save check-in for the current day
+  async saveCheckIn(): Promise<CheckInResponse> {
+    const response = await this.fetchFromAPI<CheckInResponse>('/save_check_in', {
+      method: 'POST'
+    });
+    return response as CheckInResponse;
+  }
+
+  // Get last n days of check-ins
+  async getLastNCheckIns(n: number): Promise<GetLastNCheckInResponse> {
+    const response = await this.cacheController.getData(
+      `last_${n}_check_ins`,
+      () => this.fetchFromAPI<GetLastNCheckInResponse>(`/get_last_n_check_in?n=${n}`),
+      5 * 60 * 1000 // Cache for 5 minutes
+    );
+    return response as GetLastNCheckInResponse;
   }
 }

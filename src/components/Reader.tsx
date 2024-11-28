@@ -232,6 +232,12 @@ interface ChapterDistilledContent {
   };
 }
 
+// Add this new interface for tracking pending fetches
+interface PendingFetch {
+  timeoutId: NodeJS.Timeout;
+  chapterId: number;
+}
+
 export default function Reader({ book }: ReaderProps) {
   const [visiblePages, setVisiblePages] = useState<number[]>([1]);
   const [fontSize, setFontSize] = useState("text-base");
@@ -289,6 +295,10 @@ export default function Reader({ book }: ReaderProps) {
   >([]);
 
   const [lastKnownPage, setLastKnownPage] = useState(1);
+
+  const [pendingFetches, setPendingFetches] = useState<PendingFetch[]>([]);
+
+  const [isDocumentReady, setIsDocumentReady] = useState(false);
 
   const renderSidebarContent = () => {
     const getPdfOutline = () => {
@@ -373,10 +383,19 @@ export default function Reader({ book }: ReaderProps) {
 
   const [isPdfLoaded, setIsPdfLoaded] = useState(false);
 
+  const getChapterForPage = (pageNumber: number) => {
+    return book.chapters.find((chapter) => {
+      const chapterPages = chapter.content.original;
+      return (
+        pageNumber >= Math.min(...chapterPages) &&
+        pageNumber <= Math.max(...chapterPages)
+      );
+    });
+  };
+
   const renderContent = () => {
     return (
       <div className="w-full">
-        {/* Original PDF view - always rendered but conditionally hidden */}
         <div
           className={clsx(
             "w-full relative",
@@ -409,47 +428,87 @@ export default function Reader({ book }: ReaderProps) {
               </div>
             }
           >
-            {Array.from(new Array(numPages), (_, index) => (
-              <div
-                key={`page_${index + 1}`}
-                data-page={index + 1}
-                className="mb-4"
-              >
-                <Page
-                  key={`page_${index + 1}`}
-                  pageNumber={index + 1}
-                  width={Math.min(800, window.innerWidth - 48)}
-                  className="pdf-page"
-                  renderAnnotationLayer={false}
-                  renderTextLayer={false}
-                  loading={
-                    <div className="w-full h-[800px] bg-gray-800 rounded-lg flex items-center justify-center">
-                      <div className="text-white">
-                        Loading page {index + 1}...
-                      </div>
+            {isDocumentReady &&
+              Array.from(new Array(numPages), (_, index) => {
+                const pageNumber = index + 1;
+                const chapter = getChapterForPage(pageNumber);
+
+                return (
+                  <div
+                    key={`page_${pageNumber}`}
+                    data-page={pageNumber}
+                    className="mb-4"
+                  >
+                    <Page
+                      key={`page_${pageNumber}`}
+                      pageNumber={pageNumber}
+                      width={Math.min(800, window.innerWidth - 48)}
+                      className="pdf-page"
+                      renderAnnotationLayer={false}
+                      renderTextLayer={false}
+                      loading={
+                        <div className="w-full h-[800px] bg-gray-800 rounded-lg flex items-center justify-center">
+                          <div className="text-white">
+                            Loading page {pageNumber}...
+                          </div>
+                        </div>
+                      }
+                      error={
+                        <div className="text-red-500 text-center py-4">
+                          Error loading page {pageNumber}
+                        </div>
+                      }
+                    />
+                    <div
+                      className="content-segment"
+                      data-page-number={pageNumber}
+                    >
+                      <ContentSegment
+                        isPageIndicator
+                        pageNumber={pageNumber}
+                        content=""
+                        fontSize={fontSize}
+                        fontFamily={fontFamily}
+                        isPartOfCondensed={!!chapter}
+                        condensedPageRange={
+                          chapter
+                            ? `${Math.min(
+                                ...chapter.content.original
+                              )}-${Math.max(...chapter.content.original)}`
+                            : undefined
+                        }
+                        chapterNumber={
+                          chapter
+                            ? book.chapters.indexOf(chapter) + 1
+                            : undefined
+                        }
+                        onNavigateToCondensed={
+                          chapter
+                            ? () => {
+                                setCurrentView("condensed");
+                                setActiveChapterId(chapter.id);
+                                setTimeout(() => {
+                                  const chapterElement = document.querySelector(
+                                    `[data-chapter="${chapter.id}"]`
+                                  );
+                                  if (chapterElement) {
+                                    chapterElement.scrollIntoView({
+                                      behavior: "smooth",
+                                      block: "start",
+                                    });
+                                  }
+                                }, 100);
+                              }
+                            : undefined
+                        }
+                      />
                     </div>
-                  }
-                  error={
-                    <div className="text-red-500 text-center py-4">
-                      Error loading page {index + 1}
-                    </div>
-                  }
-                />
-                <div className="content-segment" data-page-number={index + 1}>
-                  <ContentSegment
-                    isPageIndicator
-                    pageNumber={index + 1}
-                    content=""
-                    fontSize={fontSize}
-                    fontFamily={fontFamily}
-                  />
-                </div>
-              </div>
-            ))}
+                  </div>
+                );
+              })}
           </Document>
         </div>
 
-        {/* Condensed view - always rendered but conditionally hidden */}
         <div
           className={clsx(
             "max-w-4xl mx-auto",
@@ -583,6 +642,7 @@ export default function Reader({ book }: ReaderProps) {
     numPages: number;
   }) => {
     setNumPages(nextNumPages);
+    setIsDocumentReady(true);
     setReadingStats((prev) => ({
       ...prev,
       totalPages: nextNumPages,
@@ -841,8 +901,12 @@ export default function Reader({ book }: ReaderProps) {
     // Skip if not in condensed view
     if (currentView !== "condensed") return;
 
-    // For each visible chapter ID, check if we need to fetch content
-    visibleChapterIds.forEach(async (chapterId) => {
+    // Clear any existing pending fetches when visible chapters change
+    pendingFetches.forEach(({ timeoutId }) => clearTimeout(timeoutId));
+    setPendingFetches([]);
+
+    // For each visible chapter ID, schedule a fetch after delay
+    visibleChapterIds.forEach((chapterId) => {
       const numericChapterId = parseInt(chapterId);
 
       // Skip if already loading or if content exists
@@ -853,14 +917,32 @@ export default function Reader({ book }: ReaderProps) {
         return;
       }
 
-      // Find the chapter data
-      const chapter = book.chapters.find((ch) => ch.id === numericChapterId);
-      if (chapter) {
-        // Fetch content for this chapter
-        await fetchDistilledContent(chapter);
-      }
+      // Create a new timeout for this chapter
+      const timeoutId = setTimeout(async () => {
+        // Find the chapter data
+        const chapter = book.chapters.find((ch) => ch.id === numericChapterId);
+        if (chapter) {
+          // Fetch content for this chapter
+          await fetchDistilledContent(chapter);
+        }
+        // Remove this fetch from pending fetches
+        setPendingFetches((prev) =>
+          prev.filter((fetch) => fetch.chapterId !== numericChapterId)
+        );
+      }, 1000); // 1 second delay
+
+      // Add this fetch to pending fetches
+      setPendingFetches((prev) => [
+        ...prev,
+        { timeoutId, chapterId: numericChapterId },
+      ]);
     });
-  }, [visibleChapterIds, currentView, distilledContent, book.chapters]); // Add fetchDistilledContent to deps if needed
+
+    // Cleanup function to clear any remaining timeouts
+    return () => {
+      pendingFetches.forEach(({ timeoutId }) => clearTimeout(timeoutId));
+    };
+  }, [visibleChapterIds, currentView, distilledContent, book.chapters]);
 
   useEffect(() => {
     if (currentView !== "original") return;
