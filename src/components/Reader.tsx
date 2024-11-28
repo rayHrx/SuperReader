@@ -284,6 +284,12 @@ export default function Reader({ book }: ReaderProps) {
 
   const [visibleChapterIds, setVisibleChapterIds] = useState<string[]>([]);
 
+  const [visibleContentSegments, setVisibleContentSegments] = useState<
+    number[]
+  >([]);
+
+  const [lastKnownPage, setLastKnownPage] = useState(1);
+
   const renderSidebarContent = () => {
     const getPdfOutline = () => {
       if (!pdfOutline) {
@@ -429,13 +435,15 @@ export default function Reader({ book }: ReaderProps) {
                     </div>
                   }
                 />
-                <ContentSegment
-                  isPageIndicator
-                  pageNumber={index + 1}
-                  content=""
-                  fontSize={fontSize}
-                  fontFamily={fontFamily}
-                />
+                <div className="content-segment" data-page-number={index + 1}>
+                  <ContentSegment
+                    isPageIndicator
+                    pageNumber={index + 1}
+                    content=""
+                    fontSize={fontSize}
+                    fontFamily={fontFamily}
+                  />
+                </div>
               </div>
             ))}
           </Document>
@@ -774,9 +782,7 @@ export default function Reader({ book }: ReaderProps) {
   }, [visiblePages, currentView]);
 
   useEffect(() => {
-    if (currentView !== "condensed") {
-      return;
-    }
+    if (currentView !== "condensed") return;
 
     const observer = new IntersectionObserver(
       (entries) => {
@@ -856,6 +862,61 @@ export default function Reader({ book }: ReaderProps) {
     });
   }, [visibleChapterIds, currentView, distilledContent, book.chapters]); // Add fetchDistilledContent to deps if needed
 
+  useEffect(() => {
+    if (currentView !== "original") return;
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        entries.forEach((entry) => {
+          const segmentElement = entry.target as HTMLElement;
+          const pageNumber = parseInt(
+            segmentElement.getAttribute("data-page-number") || "0"
+          );
+
+          if (entry.isIntersecting) {
+            setVisibleContentSegments((prev) =>
+              prev.includes(pageNumber)
+                ? prev
+                : [...prev, pageNumber].sort((a, b) => a - b)
+            );
+            setLastKnownPage(pageNumber);
+          } else {
+            setVisibleContentSegments((prev) =>
+              prev.filter((p) => p !== pageNumber)
+            );
+          }
+        });
+      },
+      {
+        root: contentRef.current,
+        threshold: 0.5,
+        rootMargin: "-10% 0px -10% 0px",
+      }
+    );
+
+    const segments = document.querySelectorAll(".content-segment");
+    segments.forEach((segment) => observer.observe(segment));
+
+    return () => observer.disconnect();
+  }, [currentView]);
+
+  const getProgressPercentage = () => {
+    const totalPages = Math.max(
+      ...book.chapters[book.chapters.length - 1].content.original
+    );
+
+    if (currentView === "original") {
+      const currentPage = visibleContentSegments.length
+        ? Math.max(...visibleContentSegments)
+        : lastKnownPage;
+      return (currentPage / totalPages) * 100;
+    } else {
+      // Condensed view progress calculation
+      const lastVisibleChapterEndPage = getLastVisibleChapterEndPage();
+      return (lastVisibleChapterEndPage / totalPages) * 100;
+    }
+  };
+
   return (
     <div className="flex bg-gray-900 overflow-hidden">
       <button
@@ -914,15 +975,29 @@ export default function Reader({ book }: ReaderProps) {
                 <h2 className="text-lg font-semibold" title={book.title}>
                   {book.title}
                 </h2>
-                {/* <div className="text-sm text-gray-400">
+                <div className="text-sm text-gray-400">
                   {currentView === "original"
-                    ? `Page ${visiblePages.join(", ")} of ${lastPageNumber}`
-                    : `Page ${Math.min(
-                        ...(book.chapters.find(
-                          (ch) => ch.id === activeChapterId
-                        )?.content.original || [1])
-                      )} of ${lastPageNumber}`}
-                </div> */}
+                    ? `Page ${
+                        visibleContentSegments.length
+                          ? Math.max(...visibleContentSegments)
+                          : lastKnownPage
+                      } of ${lastPageNumber}`
+                    : `Page ${
+                        visibleChapterIds.length
+                          ? Math.max(
+                              ...(book.chapters.find(
+                                (ch) =>
+                                  ch.id ===
+                                  parseInt(
+                                    visibleChapterIds[
+                                      visibleChapterIds.length - 1
+                                    ]
+                                  )
+                              )?.content.original || [1])
+                            )
+                          : 1
+                      } of ${lastPageNumber}`}
+                </div>
               </div>
             </div>
 
@@ -948,16 +1023,7 @@ export default function Reader({ book }: ReaderProps) {
             <div
               className="h-full bg-blue-500 rounded-full transition-all duration-300"
               style={{
-                width: `${
-                  ((currentView === "original"
-                    ? Math.max(...visiblePages)
-                    : getLastVisibleChapterEndPage()) /
-                    Math.max(
-                      ...book.chapters[book.chapters.length - 1].content
-                        .original
-                    )) *
-                  100
-                }%`,
+                width: `${getProgressPercentage()}%`,
               }}
             />
           </div>
