@@ -48,7 +48,11 @@ export class APIs {
     this.cacheController = new CacheController(cacheService, this);
   }
 
-  private async fetchFromAPI<T>(url: string, options?: RequestInit): Promise<T> {
+  private async fetchFromAPI<T>(
+    url: string,
+    options?: RequestInit,
+    returnStatusCode: boolean = false
+  ): Promise<T | { data: T; status: number }> {
     const auth = getAuth();
     const user = auth.currentUser;
 
@@ -73,23 +77,42 @@ export class APIs {
     if (!response.ok) {
       throw new Error(`API request failed: ${response.statusText}`);
     }
-    return response.json();
+
+    // Try parsing as JSON first, fall back to text if it fails
+    let data: any;
+    const contentType = response.headers.get('content-type');
+    if (contentType && contentType.includes('application/json')) {
+      data = await response.json();
+    } else {
+      const textData = await response.text();
+      try {
+        data = JSON.parse(textData);
+      } catch {
+        data = textData;
+      }
+    }
+
+    return returnStatusCode
+      ? { data, status: response.status }
+      : data;
   }
 
   // Book endpoints
   async postBook(request: PostBookRequest): Promise<PostBookResponse> {
-    return this.fetchFromAPI<PostBookResponse>('/book', {
+    const response = await this.fetchFromAPI<PostBookResponse>('/book', {
       method: 'POST',
       body: JSON.stringify(request),
     });
+    return response as PostBookResponse;
   }
 
   async getBook(bookId: string): Promise<BookResponse> {
-    return this.cacheController.getData(
+    const response = await this.cacheController.getData(
       `book_${bookId}`,
       () => this.fetchFromAPI(`/book/${bookId}`),
       1
     );
+    return response as BookResponse;
   }
 
   async setBookUploaded(request: SetBookUploadedRequest): Promise<void> {
@@ -101,29 +124,63 @@ export class APIs {
 
   // Distilled content endpoints
   async getDistilledContent(bookId: string, startPage: number, endPage: number): Promise<DistilledContentResponse> {
+    const cacheKey = `distilled_content_${bookId}_${startPage}_${endPage}`;
+    const cacheDuration = 24 * 60 * 60 * 1000; // 24 hours
+
     return this.cacheController.getData(
-      `distilled_content_${bookId}_${startPage}_${endPage}`,
-      () => this.fetchFromAPI(`/get_distilled_content?book_id=${bookId}&start_page=${startPage}&end_page=${endPage}`),
-      24 * 60 * 60 * 1000 // Cache for 24 hours
+      cacheKey,
+      async () => {
+        const maxAttempts = 60;
+        const pollingInterval = 1000; // 1 second
+
+        const fetchWithStatus = async () => {
+          const result = await this.fetchFromAPI<DistilledContentResponse>(
+            `/get_distilled_content?book_id=${bookId}&start_page=${startPage}&end_page=${endPage}`,
+            undefined,
+            true // Set returnStatusCode to true
+          );
+          return result as { data: DistilledContentResponse; status: number };
+        };
+
+        let attempts = 0;
+        while (attempts < maxAttempts) {
+          const response = await fetchWithStatus();
+          console.log(`Attempt ${attempts + 1} for ${bookId}_${startPage}_${endPage}, status code: ${response.status}`);
+
+          if (response.status === 200) {
+            console.log(`Returned status code 200, data: ${JSON.stringify(response.data, null, 2)}`);
+            return response.data;
+          }
+
+          // If not successful, wait before trying again
+          await new Promise(resolve => setTimeout(resolve, pollingInterval));
+          attempts++;
+        }
+
+        throw new Error(`Failed to get distilled content after ${maxAttempts} attempts`);
+      },
+      cacheDuration
     );
   }
 
   // Content section endpoints of a page
   async getContentSection(bookId: string, pageNum: number): Promise<ContentSectionResponse> {
-    return this.cacheController.getData(
+    const response = await this.cacheController.getData(
       `content_section_${bookId}_${pageNum}`,
       () => this.fetchFromAPI(`/get_content_section?book_id=${bookId}&page_num=${pageNum}`),
       24 * 60 * 60 * 1000 // Cache for 24 hours
     );
+    return response as ContentSectionResponse;
   }
 
   // Get all content sections from a book
   async getAllContentSections(bookId: string): Promise<AllContentSectionsResponse> {
-    return this.cacheController.getData(
+    const response = await this.cacheController.getData(
       `all_content_sections_${bookId}`,
       () => this.fetchFromAPI(`/content_section?book_id=${bookId}`),
       24 * 60 * 60 * 1000 // Cache for 24 hours
     );
+    return response as AllContentSectionsResponse;
   }
 
   // Cache management

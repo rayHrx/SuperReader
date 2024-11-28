@@ -12,10 +12,8 @@ import "react-pdf/dist/Page/AnnotationLayer.css";
 import "react-pdf/dist/Page/TextLayer.css";
 
 // Configure PDF.js worker
-pdfjs.GlobalWorkerOptions.workerSrc = new URL(
-  "pdfjs-dist/build/pdf.worker.min.mjs",
-  import.meta.url
-).toString();
+pdfjs.GlobalWorkerOptions.workerSrc = "/pdf.worker.mjs";
+
 
 // Type for PDF metadata info
 interface PDFMetadata {
@@ -69,6 +67,8 @@ export default function ReaderPage({ params }: Props) {
           params.bookId
         );
 
+        console.log(`Book download URL: ${bookResponse.download_url}`);
+
         contentSectionsResponse.content_sections.sort(
           (a, b) => a.start_page - b.start_page
         );
@@ -97,7 +97,10 @@ export default function ReaderPage({ params }: Props) {
         let updatedBookData;
 
         if (cachedMetadata) {
-          updatedBookData = cachedMetadata;
+          updatedBookData = {
+            ...cachedMetadata,
+            pdfUrl: bookResponse.download_url,
+          };
         } else {
           const loadingTask = pdfjs.getDocument(bookResponse.download_url);
           const pdf = await loadingTask.promise;
@@ -110,7 +113,7 @@ export default function ReaderPage({ params }: Props) {
             chapters: contentSectionsResponse.content_sections.map(
               (section, index) => ({
                 id: index,
-                title: `Section ${index + 1}`,
+                title: `Chapter ${index + 1}`,
                 content: {
                   original: Array.from(
                     { length: section.end_page - section.start_page + 1 },

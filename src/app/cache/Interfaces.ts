@@ -28,10 +28,24 @@ export interface BookResponse {
   download_url: string;
 }
 
-export interface DistilledContentResponse {
-  // Define distilled content response structure
+interface Paragraph {
+  type: 'core' | 'transition';
   content: string;
-  // Add other properties
+  pages: number[];
+}
+
+interface DistilledPage {
+  book_id: string;
+  user_id: string;
+  start_page: number;
+  end_page: number;
+  paragraphs: Paragraph[];
+  created_datetime: string;
+  processing_status: 'COMPLETED' | string;
+}
+
+export interface DistilledContentResponse {
+  distilled_page: DistilledPage;
 }
 
 export interface ContentSectionResponse {

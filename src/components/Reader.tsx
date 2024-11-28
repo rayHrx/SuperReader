@@ -1,6 +1,12 @@
 'use client';
 
-import React, { useState, useRef, useCallback, useEffect } from 'react';
+import React, {
+  useState,
+  useRef,
+  useCallback,
+  useEffect,
+  useMemo,
+} from "react";
 import { Book, ReadingDepth, PageMapping } from "@/types";
 import {
   Clock,
@@ -13,6 +19,8 @@ import {
   X,
   Menu,
   MoreVertical,
+  Loader2,
+  ArrowRight,
 } from "lucide-react";
 import DepthControl from "./DepthControl";
 import TextSettings from "./TextSettings";
@@ -26,12 +34,49 @@ import "react-pdf/dist/esm/Page/AnnotationLayer.css";
 import "react-pdf/dist/esm/Page/TextLayer.css";
 import { Outline } from "react-pdf";
 import { APIs } from "@/app/cache/APIs";
-import { ContentSectionResponse } from "@/app/cache/Interfaces";
+import {
+  ContentSectionResponse,
+  DistilledContentResponse,
+} from "@/app/cache/Interfaces";
 
-pdfjs.GlobalWorkerOptions.workerSrc = `//cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjs.version}/pdf.worker.min.js`;
+pdfjs.GlobalWorkerOptions.workerSrc = "/pdf.worker.mjs";
 
 interface ReaderProps {
   book: Book;
+}
+
+interface ViewSwitchProps {
+  currentView: ReadingDepth;
+  onViewChange: (view: ReadingDepth) => void;
+}
+
+function ViewSwitch({ currentView, onViewChange }: ViewSwitchProps) {
+  return (
+    <div className="flex items-center gap-2 bg-gray-700 p-1 rounded-lg">
+      <button
+        onClick={() => onViewChange("original")}
+        className={clsx(
+          "px-3 py-1.5 rounded text-sm font-medium transition-colors",
+          currentView === "original"
+            ? "bg-blue-500 text-white"
+            : "text-gray-300 hover:bg-gray-600"
+        )}
+      >
+        Original
+      </button>
+      <button
+        onClick={() => onViewChange("condensed")}
+        className={clsx(
+          "px-3 py-1.5 rounded text-sm font-medium transition-colors",
+          currentView === "condensed"
+            ? "bg-blue-500 text-white"
+            : "text-gray-300 hover:bg-gray-600"
+        )}
+      >
+        Condensed
+      </button>
+    </div>
+  );
 }
 
 const MIN_SIDEBAR_WIDTH = 250;
@@ -179,6 +224,14 @@ const ConnectionLine = ({
   );
 };
 
+interface ChapterDistilledContent {
+  [chapterId: string]: {
+    content?: DistilledContentResponse;
+    isLoading: boolean;
+    error?: string;
+  };
+}
+
 export default function Reader({ book }: ReaderProps) {
   const [visiblePages, setVisiblePages] = useState<number[]>([1]);
   const [fontSize, setFontSize] = useState("text-base");
@@ -204,6 +257,12 @@ export default function Reader({ book }: ReaderProps) {
   const contentRef = useRef<HTMLDivElement>(null);
   const sidebarRef = useRef<HTMLDivElement>(null);
 
+  const [currentView, setCurrentView] = useState<ReadingDepth>("condensed");
+
+  const [distilledContent, setDistilledContent] =
+    useState<ChapterDistilledContent>({});
+  const api = useMemo(() => new APIs(), []);
+
   const scrollToPage = useCallback((pageNumber: number) => {
     const pageElement = document.querySelector(`[data-page="${pageNumber}"]`);
     if (pageElement) {
@@ -214,150 +273,285 @@ export default function Reader({ book }: ReaderProps) {
     }
   }, []);
 
+  const [pdfOutline, setPdfOutline] = useState<JSX.Element | null>(null);
+
+  const [lastClickedParagraphId, setLastClickedParagraphId] = useState<
+    string | null
+  >(null);
+
+  const [activeChapterId, setActiveChapterId] = useState<number | null>(null);
+  const [activePdfPage, setActivePdfPage] = useState<number | null>(null);
+
+  const [visibleChapterIds, setVisibleChapterIds] = useState<string[]>([]);
+
   const renderSidebarContent = () => {
+    const getPdfOutline = () => {
+      if (!pdfOutline) {
+        setPdfOutline(
+          <Document
+            file={book.pdfUrl}
+            onLoadSuccess={(pdf) => {
+              onDocumentLoadSuccess(pdf);
+            }}
+            loading={<div className="text-white">Loading outline...</div>}
+          >
+            <Outline
+              className={clsx(
+                "text-gray-300 space-y-2 p-2",
+                "[&>ul]:space-y-2",
+                "[&>ul>li]:text-sm",
+                "[&>ul>li>a]:block",
+                "[&>ul>li>a]:p-2",
+                "[&>ul>li>a]:rounded",
+                "[&>ul>li>a]:transition-colors",
+                "[&>ul>li>a]:cursor-pointer",
+                "[&>ul>li>a]:hover:bg-gray-700"
+              )}
+              onItemClick={({ pageNumber }) => {
+                setVisiblePages([pageNumber]);
+                setActivePdfPage(pageNumber);
+                setTimeout(() => {
+                  scrollToPage(pageNumber);
+                }, 0);
+              }}
+            />
+          </Document>
+        );
+      }
+      return pdfOutline;
+    };
+
     return (
-      <Document
-        file={book.pdfUrl}
-        onLoadSuccess={(pdf) => {
-          onDocumentLoadSuccess(pdf);
-        }}
-        loading={<div className="text-white">Loading outline...</div>}
-      >
-        <Outline
-          className={clsx(
-            "text-gray-300 space-y-2 p-2",
-            "[&>ul]:space-y-2",
-            "[&>ul>li]:text-sm",
-            "[&>ul>li>a]:block",
-            "[&>ul>li>a]:p-2",
-            "[&>ul>li>a]:rounded",
-            "[&>ul>li>a]:transition-colors",
-            "[&>ul>li>a]:cursor-pointer",
-            "[&>ul>li>a]:hover:bg-gray-700",
-            "[&>ul>li>a.active]:bg-blue-600"
-          )}
-          onItemClick={({ pageNumber }) => {
-            setVisiblePages([pageNumber]);
-            setTimeout(() => {
-              scrollToPage(pageNumber);
-            }, 0);
-          }}
-        />
-      </Document>
+      <>
+        <div className={currentView === "original" ? "block" : "hidden"}>
+          {getPdfOutline()}
+        </div>
+
+        <div className={currentView === "condensed" ? "block" : "hidden"}>
+          <div className="space-y-4">
+            {book.chapters.map((chapter, index) => (
+              <div key={chapter.id} className="px-4">
+                <button
+                  onClick={() => {
+                    setActiveChapterId(chapter.id);
+                    const chapterElement = document.querySelector(
+                      `[data-chapter="${chapter.id}"]`
+                    );
+                    if (chapterElement) {
+                      chapterElement.scrollIntoView({
+                        behavior: "smooth",
+                        block: "start",
+                      });
+                    }
+                  }}
+                  className={clsx(
+                    "text-left w-full p-2 rounded hover:bg-gray-700 transition-colors",
+                    visibleChapterIds.includes(String(chapter.id))
+                      ? "bg-blue-600 text-white"
+                      : "text-gray-300"
+                  )}
+                >
+                  <span className="text-sm font-medium">{chapter.title}</span>
+                  <div className="text-xs text-gray-400 mt-1">
+                    Source: Pages {Math.min(...chapter.content.original)} -{" "}
+                    {Math.max(...chapter.content.original)}
+                  </div>
+                </button>
+              </div>
+            ))}
+          </div>
+        </div>
+      </>
     );
   };
 
+  const [isPdfLoaded, setIsPdfLoaded] = useState(false);
+
   const renderContent = () => {
     return (
-      <div className="flex w-full">
-        {/* PDF container - left half */}
-        <div className="w-1/2 relative" ref={contentContainerRef}>
+      <div className="w-full">
+        {/* Original PDF view - always rendered but conditionally hidden */}
+        <div
+          className={clsx(
+            "w-full relative",
+            currentView === "original" ? "block" : "hidden"
+          )}
+          ref={contentContainerRef}
+        >
           <Document
             file={book.pdfUrl}
-            onLoadSuccess={onDocumentLoadSuccess}
+            onLoadSuccess={(pdf) => {
+              onDocumentLoadSuccess(pdf);
+              setIsPdfLoaded(true);
+            }}
             onLoadError={(error) =>
               console.error("Error loading document:", error)
             }
             className="flex flex-col items-center"
             loading={
-              <div className="text-white text-center py-8">Loading PDF...</div>
+              <div className="flex items-center justify-center w-full h-64">
+                <div className="text-white bg-gray-800 rounded-lg p-4">
+                  Loading PDF...
+                </div>
+              </div>
             }
             error={
-              <div className="text-red-500 text-center py-8">
-                Error loading PDF!
+              <div className="flex items-center justify-center w-full h-64">
+                <div className="text-red-500 bg-gray-800 rounded-lg p-4">
+                  Error loading PDF. Please try again.
+                </div>
               </div>
             }
           >
-            {pdfPages.map((pdfPage, index) => {
-              const pageNum = index + 1;
-              return (
-                <div key={index} data-page={pageNum} className="mb-4">
-                  {pdfPage}
-                  <ContentSegment
-                    isPageIndicator
-                    pageNumber={pageNum}
-                    content=""
-                    fontSize={fontSize}
-                    fontFamily={fontFamily}
-                  />
-                </div>
-              );
-            })}
+            {Array.from(new Array(numPages), (_, index) => (
+              <div
+                key={`page_${index + 1}`}
+                data-page={index + 1}
+                className="mb-4"
+              >
+                <Page
+                  key={`page_${index + 1}`}
+                  pageNumber={index + 1}
+                  width={Math.min(800, window.innerWidth - 48)}
+                  className="pdf-page"
+                  renderAnnotationLayer={false}
+                  renderTextLayer={false}
+                  loading={
+                    <div className="w-full h-[800px] bg-gray-800 rounded-lg flex items-center justify-center">
+                      <div className="text-white">
+                        Loading page {index + 1}...
+                      </div>
+                    </div>
+                  }
+                  error={
+                    <div className="text-red-500 text-center py-4">
+                      Error loading page {index + 1}
+                    </div>
+                  }
+                />
+                <ContentSegment
+                  isPageIndicator
+                  pageNumber={index + 1}
+                  content=""
+                  fontSize={fontSize}
+                  fontFamily={fontFamily}
+                />
+              </div>
+            ))}
           </Document>
         </div>
-        {/* Connection lines and condensed content - right half */}
-        <div className="w-1/2 relative overflow-visible">
-          {/* Connection lines container */}
-          <div className="absolute inset-0">
-            {book.chapters.map((chapter, index) => {
-              return (
-                <ConnectionLine
-                  key={index}
-                  originalPages={chapter.content.original}
-                  condensedPage={chapter.content.condensed[0]}
-                  sectionIndex={index}
-                />
-              );
-            })}
-          </div>
 
-          {/* Condensed content */}
-          <div className="relative h-full">{renderCondensedContent()}</div>
-        </div>
-      </div>
-    );
-  };
-
-  const renderCondensedContent = () => {
-    return (
-      <div className="flex flex-col">
-        {book.chapters.map((chapter, index) => {
-          // Find the corresponding original pages element to match position
-          const firstPageEl = document.querySelector(
-            `[data-page="${chapter.content.original[0]}"]`
-          );
-          const lastPageEl = document.querySelector(
-            `[data-page="${
-              chapter.content.original[chapter.content.original.length - 1]
-            }"]`
-          );
-
-          if (!firstPageEl || !lastPageEl) return null;
-
-          const containerRect =
-            contentContainerRef.current?.getBoundingClientRect();
-          const firstPageRect = firstPageEl.getBoundingClientRect();
-          const lastPageRect = lastPageEl.getBoundingClientRect();
-
-          if (!containerRect) return null;
-
-          // Calculate the vertical position to match the connection line
-          const topPosition =
-            (firstPageRect.top + lastPageRect.bottom) / 2 - containerRect.top;
-
-          return (
+        {/* Condensed view - always rendered but conditionally hidden */}
+        <div
+          className={clsx(
+            "max-w-4xl mx-auto",
+            currentView === "condensed" ? "block" : "hidden"
+          )}
+        >
+          {book.chapters.map((chapter, index) => (
             <div
-              key={index}
-              className="bg-gray-800 rounded-lg p-4 absolute left-32 -translate-y-1/2"
-              style={{
-                top: `${topPosition}px`,
-                width: "calc(100% - 140px)", // Account for the left spacing
-              }}
+              key={chapter.id}
+              className={clsx(
+                "mb-6 p-6 bg-gray-800 rounded-lg shadow-lg",
+                visibleChapterIds.includes(String(chapter.id)) &&
+                  "ring-2 ring-blue-500",
+                "transition-all duration-200"
+              )}
+              data-page={chapter.content.condensed}
+              data-chapter={String(chapter.id)}
             >
-              <h3 className="text-lg font-semibold text-white mb-2">
+              <h3 className="text-xl font-semibold text-white mb-3 flex items-center gap-2">
                 {chapter.title}
+                {visibleChapterIds.includes(String(chapter.id)) && (
+                  <ArrowRight className="w-5 h-5 text-blue-500 animate-pulse" />
+                )}
               </h3>
-              <p className="text-gray-400 text-sm mb-2">
-                Original Pages: {chapter.content.original.join(", ")}
-                <br />
-                Condensed Page: {chapter.content.condensed[0]}
-              </p>
-              <p className="text-gray-300">
-                Condensed content for section {index + 1}
-              </p>
+
+              {!distilledContent[chapter.id]?.content && (
+                <button
+                  onClick={() => fetchDistilledContent(chapter)}
+                  disabled={distilledContent[chapter.id]?.isLoading}
+                  className={clsx(
+                    "flex items-center gap-2 px-4 py-2 rounded",
+                    "bg-blue-500 hover:bg-blue-600 disabled:bg-blue-400",
+                    "text-white text-sm font-medium transition-colors"
+                  )}
+                >
+                  {distilledContent[chapter.id]?.isLoading ? (
+                    <>
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                      Loading...
+                    </>
+                  ) : (
+                    "Load Distilled Content"
+                  )}
+                </button>
+              )}
+
+              {distilledContent[chapter.id]?.error && (
+                <div className="text-red-400 text-sm mt-2">
+                  {distilledContent[chapter.id].error}
+                </div>
+              )}
+
+              {distilledContent[chapter.id]?.content && (
+                <div className="mt-4 p-4 bg-gray-700 rounded">
+                  <div className="prose prose-invert max-w-none space-y-6">
+                    {distilledContent[
+                      chapter.id
+                    ]?.content?.distilled_page.paragraphs.map(
+                      (paragraph, index) => {
+                        const paragraphId = `${chapter.id}-paragraph-${index}`;
+
+                        return (
+                          <div
+                            key={index}
+                            id={paragraphId}
+                            onClick={() => {
+                              setLastClickedParagraphId(paragraphId);
+                              setCurrentView("original");
+                              const startPage = paragraph.pages[0];
+                              setTimeout(() => {
+                                scrollToPage(startPage);
+                              }, 100);
+                            }}
+                            className={clsx(
+                              "relative cursor-pointer hover:bg-gray-600/30 transition-colors p-2 rounded",
+                              paragraph.type === "core" &&
+                                "pl-4 border-l-2 border-blue-500",
+                              paragraph.type === "transition" &&
+                                "pr-4 border-r-2 border-emerald-500/50 italic text-right"
+                            )}
+                          >
+                            <div
+                              className={clsx(
+                                "transition-colors",
+                                paragraph.type === "core" && "text-gray-100",
+                                paragraph.type === "transition" &&
+                                  "text-gray-400"
+                              )}
+                            >
+                              {paragraph.content}
+                            </div>
+
+                            {paragraph.type === "core" &&
+                              paragraph.pages.length > 0 && (
+                                <div className="mt-2 text-xs text-gray-500">
+                                  Source: Page
+                                  {paragraph.pages.length > 1 ? "s" : ""}{" "}
+                                  {paragraph.pages.join(", ")}
+                                </div>
+                              )}
+                          </div>
+                        );
+                      }
+                    )}
+                  </div>
+                </div>
+              )}
             </div>
-          );
-        })}
+          ))}
+        </div>
       </div>
     );
   };
@@ -444,45 +638,6 @@ export default function Reader({ book }: ReaderProps) {
   }, []);
 
   useEffect(() => {
-    const loadPdfPages = async () => {
-      try {
-        const pages = [];
-        for (let pageNumber = 1; pageNumber <= numPages; pageNumber++) {
-          pages.push(
-            <div key={pageNumber} className="pdf-page" data-page={pageNumber}>
-              <Page
-                pageNumber={pageNumber}
-                width={Math.min(800, window.innerWidth - 48)}
-                className="pdf-page"
-                renderAnnotationLayer={false}
-                renderTextLayer={false}
-                scale={1}
-                loading={
-                  <div className="text-white text-center py-4">
-                    Loading page {pageNumber}...
-                  </div>
-                }
-                error={
-                  <div className="text-red-500 text-center py-4">
-                    Error loading page {pageNumber}!
-                  </div>
-                }
-              />
-            </div>
-          );
-        }
-        setPdfPages(pages);
-      } catch (error) {
-        console.error("Error loading PDF pages:", error);
-      }
-    };
-
-    if (numPages > 0) {
-      loadPdfPages();
-    }
-  }, [numPages]);
-
-  useEffect(() => {
     const observer = new IntersectionObserver(
       (entries) => {
         entries.forEach((entry) => {
@@ -544,6 +699,163 @@ export default function Reader({ book }: ReaderProps) {
     return () => observer.disconnect();
   }, [pdfPages]);
 
+  const fetchDistilledContent = async (chapter: Book["chapters"][0]) => {
+    const startPage = Math.min(...chapter.content.original);
+    const endPage = Math.max(...chapter.content.original);
+
+    await api.initialize();
+
+    // Set loading state
+    setDistilledContent((prev) => ({
+      ...prev,
+      [chapter.id]: { isLoading: true },
+    }));
+
+    try {
+      const content = await api.getDistilledContent(
+        book.id,
+        startPage,
+        endPage
+      );
+      setDistilledContent((prev) => ({
+        ...prev,
+        [chapter.id]: { content, isLoading: false },
+      }));
+    } catch (error) {
+      console.error("Error fetching distilled content:", error);
+      setDistilledContent((prev) => ({
+        ...prev,
+        [chapter.id]: {
+          isLoading: false,
+          error: "Failed to load distilled content. Please try again.",
+        },
+      }));
+    }
+  };
+
+  const lastPageNumber = useMemo(() => {
+    if (!book.chapters.length) return 0;
+    const lastChapter = book.chapters[book.chapters.length - 1];
+    return Math.min(...lastChapter.content.original);
+  }, [book.chapters]);
+
+  useEffect(() => {
+    if (currentView === "condensed" && lastClickedParagraphId) {
+      setTimeout(() => {
+        const element = document.getElementById(lastClickedParagraphId);
+        if (element) {
+          element.scrollIntoView({ behavior: "smooth", block: "center" });
+        }
+      }, 100);
+    }
+  }, [currentView, lastClickedParagraphId]);
+
+  useEffect(() => {
+    if (visiblePages.length > 0 && currentView === "condensed") {
+      const currentPage = Math.min(...visiblePages);
+      const activeChapter = book.chapters.find((chapter) => {
+        const chapterPages = chapter.content.original;
+        return (
+          currentPage >= Math.min(...chapterPages) &&
+          currentPage <= Math.max(...chapterPages)
+        );
+      });
+
+      if (activeChapter) {
+        setActiveChapterId(activeChapter.id);
+      }
+    }
+  }, [visiblePages, currentView, book.chapters]);
+
+  useEffect(() => {
+    if (visiblePages.length > 0 && currentView === "original") {
+      setActivePdfPage(Math.min(...visiblePages));
+    }
+  }, [visiblePages, currentView]);
+
+  useEffect(() => {
+    if (currentView !== "condensed") {
+      return;
+    }
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        entries.forEach((entry) => {
+          const chapterId = entry.target.getAttribute("data-chapter");
+
+          if (chapterId) {
+            setVisibleChapterIds((prev) => {
+              if (entry.isIntersecting) {
+                // Add chapter ID if not already present
+                return prev.includes(chapterId) ? prev : [...prev, chapterId];
+              } else {
+                // Remove chapter ID when no longer visible
+                return prev.filter((id) => id !== chapterId);
+              }
+            });
+          }
+        });
+      },
+      {
+        root: contentRef.current,
+        threshold: 0.3,
+        rootMargin: "-10% 0px -10% 0px", // Adjusted to be more balanced
+      }
+    );
+
+    const chapterElements = document.querySelectorAll("[data-chapter]");
+    chapterElements.forEach((element) => {
+      if (element) {
+        observer.observe(element);
+      }
+    });
+
+    return () => {
+      observer.disconnect();
+    };
+  }, [currentView]);
+
+  const getLastVisibleChapterEndPage = useCallback(() => {
+    if (visibleChapterIds.length === 0) return 1;
+
+    // Get all visible chapters
+    const visibleChapters = book.chapters.filter((chapter) =>
+      visibleChapterIds.includes(String(chapter.id))
+    );
+
+    if (visibleChapters.length === 0) return 1;
+
+    // Get the last visible chapter
+    const lastVisibleChapter = visibleChapters[visibleChapters.length - 1];
+    // Return the highest page number from that chapter
+    return Math.max(...lastVisibleChapter.content.original);
+  }, [visibleChapterIds, book.chapters]);
+
+  useEffect(() => {
+    // Skip if not in condensed view
+    if (currentView !== "condensed") return;
+
+    // For each visible chapter ID, check if we need to fetch content
+    visibleChapterIds.forEach(async (chapterId) => {
+      const numericChapterId = parseInt(chapterId);
+
+      // Skip if already loading or if content exists
+      if (
+        distilledContent[numericChapterId]?.isLoading ||
+        distilledContent[numericChapterId]?.content
+      ) {
+        return;
+      }
+
+      // Find the chapter data
+      const chapter = book.chapters.find((ch) => ch.id === numericChapterId);
+      if (chapter) {
+        // Fetch content for this chapter
+        await fetchDistilledContent(chapter);
+      }
+    });
+  }, [visibleChapterIds, currentView, distilledContent, book.chapters]); // Add fetchDistilledContent to deps if needed
+
   return (
     <div className="flex bg-gray-900 overflow-hidden">
       <button
@@ -602,13 +914,23 @@ export default function Reader({ book }: ReaderProps) {
                 <h2 className="text-lg font-semibold" title={book.title}>
                   {book.title}
                 </h2>
-                <div className="text-sm text-gray-400">
-                  Page {visiblePages.join(", ")} of {numPages}
-                </div>
+                {/* <div className="text-sm text-gray-400">
+                  {currentView === "original"
+                    ? `Page ${visiblePages.join(", ")} of ${lastPageNumber}`
+                    : `Page ${Math.min(
+                        ...(book.chapters.find(
+                          (ch) => ch.id === activeChapterId
+                        )?.content.original || [1])
+                      )} of ${lastPageNumber}`}
+                </div> */}
               </div>
             </div>
 
-            <div className="flex items-center gap-2 sm:gap-6">
+            <div className="flex items-center gap-4">
+              <ViewSwitch
+                currentView={currentView}
+                onViewChange={setCurrentView}
+              />
               <MobileMenu
                 showStats={showStats}
                 setShowStats={setShowStats}
@@ -626,7 +948,16 @@ export default function Reader({ book }: ReaderProps) {
             <div
               className="h-full bg-blue-500 rounded-full transition-all duration-300"
               style={{
-                width: `${(Math.max(...visiblePages) / numPages) * 100}%`,
+                width: `${
+                  ((currentView === "original"
+                    ? Math.max(...visiblePages)
+                    : getLastVisibleChapterEndPage()) /
+                    Math.max(
+                      ...book.chapters[book.chapters.length - 1].content
+                        .original
+                    )) *
+                  100
+                }%`,
               }}
             />
           </div>
