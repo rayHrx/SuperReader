@@ -16,25 +16,66 @@ interface UploadingBook {
   bookId?: string;
   uploadUrl?: string;
   isUploading: boolean;
-  uploadProgress: number;
   isComplete?: boolean;
   error?: string;
+  title?: string;
+  showTitleInput?: boolean;
 }
 
 function calculateCompressionScore(book: Book) {
+  const compressionPercentage = book.compression_ratio
+    ? Math.round((1 - book.compression_ratio) * 100)
+    : 0;
+
+  const minutesPerPage = 2;
+  const originalTime = book.total_page ? book.total_page * minutesPerPage : 0;
+  const condensedTime = book.compression_ratio
+    ? Math.round(originalTime * book.compression_ratio)
+    : originalTime;
+
+  const totalTimeSaved = originalTime - condensedTime;
+
+  const progress =
+    book.progress && book.total_page ? book.progress / book.total_page : 0;
+  const timeSaved = Math.round(totalTimeSaved * progress);
+
   return {
-    score: book.compression_ratio ?? 0,
-    originalTime: 10,
-    condensedTime: 1,
+    score: compressionPercentage,
+    originalTime,
+    condensedTime,
+    timeSaved,
+    totalTimeSaved,
   };
+}
+
+function formatUploadDate(dateString?: string): string {
+  if (!dateString) return "Unknown date";
+
+  const date = new Date(dateString);
+  const now = new Date();
+  const diffInHours = (now.getTime() - date.getTime()) / (1000 * 60 * 60);
+
+  if (diffInHours < 24) {
+    if (diffInHours < 1) {
+      const minutes = Math.floor(diffInHours * 60);
+      return `${minutes} minute${minutes !== 1 ? "s" : ""} ago`;
+    }
+    const hours = Math.floor(diffInHours);
+    return `${hours} hour${hours !== 1 ? "s" : ""} ago`;
+  }
+
+  return date.toLocaleDateString();
 }
 
 export default function Library({ initialBooks = [] }: LibraryProps) {
   const [books, setBooks] = useState<Book[]>(initialBooks);
   const [isDragging, setIsDragging] = useState(false);
-  const [uploadingBooks, setUploadingBooks] = useState<UploadingBook[]>([]);
+  const [uploadingBook, setUploadingBook] = useState<UploadingBook | null>(
+    null
+  );
   const { apis, isInitialized } = useAPIs();
   const fileInputRef = React.useRef<HTMLInputElement>(null);
+  const [isLoading, setIsLoading] = useState(true);
 
   useEffect(() => {
     const fetchBooks = async () => {
@@ -42,21 +83,40 @@ export default function Library({ initialBooks = [] }: LibraryProps) {
 
       try {
         await apis.initialize();
+        setIsLoading(true);
 
         const response = await apis.getBooks();
-        const uploadedBooks = response.books
+        const uploadedBooks: Book[] = response.books
           .filter((book) => book.is_uploaded)
           .map((book) => ({
             id: book.id,
-            title: book.title || "Empty Book Name",
+            title: book.title || "Untitled Book",
+            type: book.type as "pdf" | "epub",
+            user_id: book.user_id,
+            created_at: book.created_datetime,
+            updated_at: book.created_datetime,
+            status: "ready",
+            is_uploaded: book.is_uploaded,
+            progress: book.progress,
+            content_section_generated: book.content_section_generated,
+            total_page: book.total_page,
+            compression_ratio: book.compression_ratio,
             coverUrl:
               "https://images.unsplash.com/photo-1589998059171-988d887df646?w=800&auto=format&fit=crop&q=60",
-            compression_ratio: book.compression_ratio ?? 0,
+            author: "",
+            pdfUrl: "",
             chapters: [],
-          }));
+          }))
+          .sort(
+            (a, b) =>
+              new Date(b.created_at).getTime() -
+              new Date(a.created_at).getTime()
+          );
         setBooks(uploadedBooks);
       } catch (error) {
         console.error("Error fetching books:", error);
+      } finally {
+        setIsLoading(false);
       }
     };
 
@@ -66,109 +126,141 @@ export default function Library({ initialBooks = [] }: LibraryProps) {
   }, [apis, isInitialized]);
 
   const processFiles = async (files: File[]) => {
-    if (!apis) return;
+    if (!apis || files.length === 0) return;
 
     try {
       await apis.initialize();
+      const file = files[0];
 
-      const newUploadingBooks = files.map((file) => ({
+      setUploadingBook({
         file,
         isUploading: false,
-        uploadProgress: 0,
-      }));
+      });
 
-      setUploadingBooks((prev) => [...prev, ...newUploadingBooks]);
+      const bookRequest = {
+        type: file.name.toLowerCase().endsWith(".pdf") ? "pdf" : "epub",
+      };
 
-      for (const uploadingBook of newUploadingBooks) {
-        try {
-          const bookRequest = {
-            type: uploadingBook.file.name.toLowerCase().endsWith(".pdf")
-              ? "pdf"
-              : "epub",
-          };
+      const response: PostBookResponse = await apis.postBook(bookRequest);
 
-          const response: PostBookResponse = await apis.postBook(bookRequest);
-
-          setUploadingBooks((prev) =>
-            prev.map((book) =>
-              book === uploadingBook
-                ? {
-                    ...book,
-                    bookId: response.book_id,
-                    uploadUrl: response.upload_url,
-                  }
-                : book
-            )
-          );
-        } catch (error) {
-          console.error("Error getting upload URL:", error);
-          setUploadingBooks((prev) =>
-            prev.filter((book) => book !== uploadingBook)
-          );
-        }
-      }
+      setUploadingBook((prev) =>
+        prev
+          ? {
+              ...prev,
+              bookId: response.book_id,
+              uploadUrl: response.upload_url,
+            }
+          : null
+      );
     } catch (error) {
-      console.error("Error initializing API:", error);
+      console.error("Error getting upload URL:", error);
+      setUploadingBook(null);
     }
   };
 
-  const uploadBookFile = async (uploadingBook: UploadingBook) => {
-    if (!uploadingBook.uploadUrl || !uploadingBook.bookId) return;
+  const uploadBookFile = async (book: UploadingBook) => {
+    if (!book.uploadUrl || !book.bookId) return;
 
     try {
-      setUploadingBooks((prev) =>
-        prev.map((book) =>
-          book === uploadingBook
-            ? {
-                ...book,
-                isUploading: true,
-                error: undefined,
-                uploadProgress: 0,
-              }
-            : book
-        )
+      setUploadingBook((prev) =>
+        prev
+          ? {
+              ...prev,
+              isUploading: true,
+              error: undefined,
+            }
+          : null
       );
 
-      // Use fetch instead of XMLHttpRequest
-      const response = await fetch(uploadingBook.uploadUrl, {
+      const response = await fetch(book.uploadUrl, {
         method: "PUT",
-        body: uploadingBook.file,
-        mode: "cors", // Explicitly set CORS mode
+        body: book.file,
+        mode: "cors",
       });
 
       if (!response.ok) {
         throw new Error(`Upload failed with status: ${response.status}`);
       }
 
-      // Set progress to 100% when complete
-      setUploadingBooks((prev) =>
-        prev.map((book) =>
-          book === uploadingBook ? { ...book, uploadProgress: 100 } : book
-        )
-      );
-
-      // Notify backend that upload is complete
-      await apis!.setBookUploaded({ book_id: uploadingBook.bookId });
-
-      setUploadingBooks((prev) =>
-        prev.map((book) =>
-          book === uploadingBook
-            ? { ...book, isUploading: false, isComplete: true }
-            : book
-        )
+      setUploadingBook((prev) =>
+        prev
+          ? {
+              ...prev,
+              isUploading: false,
+              showTitleInput: true,
+              title: book.file.name.replace(/\.[^/.]+$/, ""),
+            }
+          : null
       );
     } catch (error) {
       console.error("Error uploading file:", error);
-      setUploadingBooks((prev) =>
-        prev.map((book) =>
-          book === uploadingBook
-            ? {
-                ...book,
-                isUploading: false,
-                error: error instanceof Error ? error.message : "Upload failed",
-              }
-            : book
-        )
+      setUploadingBook((prev) =>
+        prev
+          ? {
+              ...prev,
+              isUploading: false,
+              error: error instanceof Error ? error.message : "Upload failed",
+            }
+          : null
+      );
+    }
+  };
+
+  const finishUpload = async (book: UploadingBook) => {
+    if (!book.bookId || !book.title) return;
+
+    try {
+      await apis!.setBookUploaded(book.bookId, {
+        is_uploaded: true,
+        title: book.title,
+      });
+
+      // Reset upload UI
+      setUploadingBook(null);
+
+      // Refresh books list
+      if (apis) {
+        const response = await apis.getBooks();
+        const uploadedBooks: Book[] = response.books
+          .filter((book) => book.is_uploaded)
+          .map((book) => ({
+            id: book.id,
+            title: book.title || "Untitled Book",
+            type: book.type as "pdf" | "epub",
+            user_id: book.user_id,
+            created_at: book.created_datetime,
+            updated_at: book.created_datetime,
+            status: "ready",
+            is_uploaded: book.is_uploaded,
+            progress: book.progress,
+            content_section_generated: book.content_section_generated,
+            total_page: book.total_page,
+            compression_ratio: book.compression_ratio,
+            coverUrl:
+              "https://images.unsplash.com/photo-1589998059171-988d887df646?w=800&auto=format&fit=crop&q=60",
+            author: "",
+            pdfUrl: "",
+            chapters: [],
+          }))
+          .sort(
+            (a, b) =>
+              new Date(b.created_at).getTime() -
+              new Date(a.created_at).getTime()
+          );
+        setBooks(uploadedBooks);
+      }
+    } catch (error) {
+      console.error("Error finishing upload:", error);
+      setUploadingBook((prev) =>
+        prev
+          ? {
+              ...prev,
+              error:
+                error instanceof Error
+                  ? error.message
+                  : "Failed to finish upload",
+            }
+          : null
       );
     }
   };
@@ -223,122 +315,118 @@ export default function Library({ initialBooks = [] }: LibraryProps) {
             : "border-gray-700 hover:border-gray-600"
         }`}
       >
-        {uploadingBooks.length > 0 ? (
-          <div className="space-y-4">
-            {uploadingBooks.map((book, index) => (
-              <div key={index} className="bg-gray-800/50 rounded-lg p-4">
-                <div className="flex justify-between items-center mb-4">
-                  <span className="text-white">{book.file.name}</span>
-                  <span className="text-gray-400">
-                    {(book.file.size / (1024 * 1024)).toFixed(2)} MB
-                  </span>
-                </div>
+        {uploadingBook ? (
+          <div className="bg-gray-800/50 rounded-lg p-4">
+            <div className="flex justify-between items-center mb-4">
+              <span className="text-white">{uploadingBook.file.name}</span>
+              <span className="text-gray-400">
+                {(uploadingBook.file.size / (1024 * 1024)).toFixed(2)} MB
+              </span>
+            </div>
 
-                {book.error && (
-                  <div className="text-red-500 mb-4 text-sm">
-                    Error: {book.error}
-                  </div>
-                )}
+            {uploadingBook.error && (
+              <div className="text-red-500 mb-4 text-sm">
+                Error: {uploadingBook.error}
+              </div>
+            )}
 
-                <div className="flex justify-center space-x-4">
-                  {book.isComplete ? (
-                    <button
-                      onClick={() => setUploadingBooks([])}
-                      className="bg-green-600 text-white px-6 py-2 rounded-md hover:bg-green-700 flex items-center space-x-2"
+            <div className="flex justify-center space-x-4">
+              {uploadingBook.showTitleInput ? (
+                <div className="space-y-4">
+                  <div className="flex flex-col space-y-2">
+                    <label
+                      htmlFor="bookTitle"
+                      className="text-sm text-gray-400"
                     >
-                      <svg
-                        className="w-5 h-5"
-                        fill="none"
-                        stroke="currentColor"
-                        viewBox="0 0 24 24"
-                      >
-                        <path
-                          strokeLinecap="round"
-                          strokeLinejoin="round"
-                          strokeWidth={2}
-                          d="M5 13l4 4L19 7"
-                        />
-                      </svg>
-                      <span>Upload Complete</span>
-                    </button>
-                  ) : book.isUploading ? (
-                    <div className="flex items-center space-x-2 text-blue-500">
-                      <svg
-                        className="animate-spin h-5 w-5"
-                        xmlns="http://www.w3.org/2000/svg"
-                        fill="none"
-                        viewBox="0 0 24 24"
-                      >
-                        <circle
-                          className="opacity-25"
-                          cx="12"
-                          cy="12"
-                          r="10"
-                          stroke="currentColor"
-                          strokeWidth="4"
-                        ></circle>
-                        <path
-                          className="opacity-75"
-                          fill="currentColor"
-                          d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
-                        ></path>
-                      </svg>
-                      <span>Uploading...</span>
-                    </div>
-                  ) : (
-                    <>
-                      {!book.uploadUrl ? (
-                        <div className="flex items-center space-x-2 text-gray-400">
-                          <svg
-                            className="animate-spin h-5 w-5"
-                            xmlns="http://www.w3.org/2000/svg"
-                            fill="none"
-                            viewBox="0 0 24 24"
-                          >
-                            <circle
-                              className="opacity-25"
-                              cx="12"
-                              cy="12"
-                              r="10"
-                              stroke="currentColor"
-                              strokeWidth="4"
-                            ></circle>
-                            <path
-                              className="opacity-75"
-                              fill="currentColor"
-                              d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
-                            ></path>
-                          </svg>
-                          <span>Preparing...</span>
-                        </div>
-                      ) : (
-                        <button
-                          onClick={() => uploadBookFile(book)}
-                          className="bg-blue-600 text-white px-4 py-2 rounded-md hover:bg-blue-700"
-                        >
-                          Start Upload
-                        </button>
-                      )}
-                      <button
-                        onClick={() => setUploadingBooks([])}
-                        className="bg-gray-600 text-white px-4 py-2 rounded-md hover:bg-gray-700"
-                      >
-                        Cancel
-                      </button>
-                    </>
-                  )}
-                </div>
-
-                {book.isUploading && (
-                  <div className="w-full bg-gray-700 rounded-full h-2 mt-4">
-                    <div
-                      className="bg-blue-600 h-2 rounded-full transition-all duration-300"
-                      style={{ width: `${book.uploadProgress}%` }}
+                      Book Title
+                    </label>
+                    <input
+                      id="bookTitle"
+                      type="text"
+                      value={uploadingBook.title}
+                      onChange={(e) =>
+                        setUploadingBook((prev) =>
+                          prev
+                            ? {
+                                ...prev,
+                                title: e.target.value,
+                              }
+                            : null
+                        )
+                      }
+                      className="px-3 py-2 bg-gray-700 rounded-md text-white focus:ring-2 focus:ring-blue-500 focus:outline-none"
+                      placeholder="Enter book title"
                     />
                   </div>
-                )}
-              </div>
-            ))}
+                  <div className="flex space-x-3">
+                    <button
+                      onClick={() => finishUpload(uploadingBook)}
+                      className="bg-blue-600 text-white px-4 py-2 rounded-md hover:bg-blue-700 flex items-center space-x-2"
+                    >
+                      <span>Finish Upload</span>
+                    </button>
+                    <button
+                      onClick={() => setUploadingBook(null)}
+                      className="bg-gray-600 text-white px-4 py-2 rounded-md hover:bg-gray-700"
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                </div>
+              ) : uploadingBook.isComplete ? (
+                <button
+                  onClick={() => setUploadingBook(null)}
+                  className="bg-green-600 text-white px-6 py-2 rounded-md hover:bg-green-700 flex items-center space-x-2"
+                >
+                  <svg
+                    className="w-5 h-5"
+                    fill="none"
+                    stroke="currentColor"
+                    viewBox="0 0 24 24"
+                  >
+                    <path
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      strokeWidth={2}
+                      d="M5 13l4 4L19 7"
+                    />
+                  </svg>
+                  <span>Upload Complete</span>
+                </button>
+              ) : uploadingBook.isUploading ? (
+                <div className="flex items-center justify-center mt-4">
+                  <div className="animate-spin w-8 h-8">
+                    <svg
+                      className="w-full h-full text-gray-400"
+                      xmlns="http://www.w3.org/2000/svg"
+                      fill="none"
+                      viewBox="0 0 24 24"
+                    >
+                      <circle
+                        className="opacity-25"
+                        cx="12"
+                        cy="12"
+                        r="10"
+                        stroke="currentColor"
+                        strokeWidth="4"
+                      ></circle>
+                      <path
+                        className="opacity-75"
+                        fill="currentColor"
+                        d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
+                      ></path>
+                    </svg>
+                  </div>
+                </div>
+              ) : (
+                <button
+                  onClick={() => uploadBookFile(uploadingBook)}
+                  className="bg-blue-600 text-white px-4 py-2 rounded-md hover:bg-blue-700"
+                >
+                  Start Upload
+                </button>
+              )}
+            </div>
           </div>
         ) : (
           <>
@@ -347,7 +435,7 @@ export default function Library({ initialBooks = [] }: LibraryProps) {
               Upload a Book
             </h3>
             <p className="text-gray-400 mb-4">
-              Drag and drop your book files here, or click to select files
+              Drag and drop your book file here, or click to select file
             </p>
             <input
               type="file"
@@ -355,13 +443,12 @@ export default function Library({ initialBooks = [] }: LibraryProps) {
               onChange={handleFileSelect}
               className="hidden"
               accept=".pdf,.epub,.txt"
-              multiple
             />
             <button
               onClick={handleSelectClick}
               className="inline-flex items-center px-4 py-2 text-sm font-medium rounded-md shadow-sm text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
             >
-              Select Files
+              Select File
             </button>
           </>
         )}
@@ -370,9 +457,17 @@ export default function Library({ initialBooks = [] }: LibraryProps) {
       {/* Book Grid */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
         {books.map((book) => {
-          const { score } = calculateCompressionScore(book);
-          const timeSaved = 0;
-          const progressPercentage = 30;
+          const {
+            score,
+            originalTime,
+            condensedTime,
+            timeSaved,
+            totalTimeSaved,
+          } = calculateCompressionScore(book);
+          const progressPercentage =
+            book.progress && book.total_page
+              ? Math.round((book.progress / book.total_page) * 100)
+              : 0;
 
           return (
             <div
@@ -390,6 +485,9 @@ export default function Library({ initialBooks = [] }: LibraryProps) {
                   <h3 className="text-xl font-bold text-white mb-1">
                     {book.title}
                   </h3>
+                  <p className="text-sm text-gray-300">
+                    Uploaded {formatUploadDate(book.created_at)}
+                  </p>
                 </div>
               </div>
 
@@ -401,7 +499,9 @@ export default function Library({ initialBooks = [] }: LibraryProps) {
                       <Gauge className="w-4 h-4 text-blue-400" />
                       <span className="text-sm text-gray-400">Compression</span>
                     </div>
-                    <div className="text-lg font-semibold text-white">30%</div>
+                    <div className="text-lg font-semibold text-white">
+                      {score}%
+                    </div>
                   </div>
                   <div className="bg-gray-700/50 rounded-lg p-3">
                     <div className="flex items-center gap-2 mb-2">
@@ -418,7 +518,11 @@ export default function Library({ initialBooks = [] }: LibraryProps) {
                 <div className="bg-gray-700/30 rounded-lg p-3 mb-4">
                   <div className="flex justify-between text-sm text-gray-400">
                     <span>Reading Time</span>
-                    <span>10m → 1m</span>
+                    <span>
+                      {book.compression_ratio
+                        ? `${originalTime}m → ${condensedTime}m`
+                        : "..."}
+                    </span>
                   </div>
                 </div>
 
@@ -426,7 +530,13 @@ export default function Library({ initialBooks = [] }: LibraryProps) {
                 <div className="mb-4">
                   <div className="flex items-center justify-between text-sm text-gray-400 mb-2">
                     <span>Reading Progress</span>
-                    <span>{progressPercentage}%</span>
+                    <span>
+                      {/* {typeof book.progress === "number" &&
+                      typeof book.total_page === "number"
+                        ? `${book.progress}/${book.total_page} pages`
+                        : "0/0 pages"} */}
+                      {`${book.progress}/${book.total_page} pages`}
+                    </span>
                   </div>
                   <div className="h-2 bg-gray-600 rounded-full">
                     <div
@@ -438,13 +548,37 @@ export default function Library({ initialBooks = [] }: LibraryProps) {
 
                 {/* Actions */}
                 <div className="flex justify-between items-center">
-                  <Link
-                    href={`/read/${book.id}`}
-                    className="inline-flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
-                  >
-                    <BookOpen className="w-4 h-4" />
-                    Read Now
-                  </Link>
+                  {score === 0 ? (
+                    <button
+                      disabled
+                      className="inline-flex items-center gap-2 px-4 py-2 bg-gray-600 text-gray-300 rounded-lg cursor-not-allowed"
+                    >
+                      <svg className="animate-spin h-4 w-4" viewBox="0 0 24 24">
+                        <circle
+                          className="opacity-25"
+                          cx="12"
+                          cy="12"
+                          r="10"
+                          stroke="currentColor"
+                          strokeWidth="4"
+                        />
+                        <path
+                          className="opacity-75"
+                          fill="currentColor"
+                          d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
+                        />
+                      </svg>
+                      Processing
+                    </button>
+                  ) : (
+                    <Link
+                      href={`/read/${book.id}?progress=${book.progress || 1}`}
+                      className="inline-flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
+                    >
+                      <BookOpen className="w-4 h-4" />
+                      Read Now
+                    </Link>
+                  )}
                   <button
                     onClick={() => handleDelete(book.id)}
                     className="p-2 text-gray-400 hover:text-red-500 transition-colors"
@@ -460,7 +594,7 @@ export default function Library({ initialBooks = [] }: LibraryProps) {
       </div>
 
       {/* Empty State */}
-      {books.length === 0 && (
+      {!isLoading && books.length === 0 && (
         <div className="text-center py-12">
           <BookOpen className="w-16 h-16 mx-auto text-gray-400 mb-4" />
           <h3 className="text-xl font-semibold text-white mb-2">
@@ -468,6 +602,40 @@ export default function Library({ initialBooks = [] }: LibraryProps) {
           </h3>
           <p className="text-gray-400">
             Upload your first book to start reading
+          </p>
+        </div>
+      )}
+
+      {/* Loading State */}
+      {isLoading && (
+        <div className="text-center py-12">
+          <div className="animate-spin w-16 h-16 mx-auto mb-4">
+            <svg
+              className="w-full h-full text-gray-400"
+              xmlns="http://www.w3.org/2000/svg"
+              fill="none"
+              viewBox="0 0 24 24"
+            >
+              <circle
+                className="opacity-25"
+                cx="12"
+                cy="12"
+                r="10"
+                stroke="currentColor"
+                strokeWidth="4"
+              ></circle>
+              <path
+                className="opacity-75"
+                fill="currentColor"
+                d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
+              ></path>
+            </svg>
+          </div>
+          <h3 className="text-xl font-semibold text-white mb-2">
+            Loading Your Library
+          </h3>
+          <p className="text-gray-400">
+            Please wait while we fetch your books...
           </p>
         </div>
       )}

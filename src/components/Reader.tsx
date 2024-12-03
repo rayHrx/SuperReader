@@ -238,6 +238,61 @@ interface PendingFetch {
   chapterId: number;
 }
 
+// Add this new component at the top of the file
+const ProcessingStatus = ({ onSwitchView }: { onSwitchView: () => void }) => (
+  <div className="text-center p-8 bg-gray-800/50 rounded-lg shadow-lg max-w-md mx-auto">
+    <div className="relative mb-6">
+      <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-500 mx-auto"></div>
+      <div className="absolute inset-0 flex items-center justify-center">
+        <Sparkles className="w-6 h-6 text-blue-400" />
+      </div>
+    </div>
+    <h3 className="text-xl font-semibold text-white mb-3">
+      SuperReaderAI Processing
+    </h3>
+    <p className="text-gray-300 mb-4">
+      Our AI is analyzing your book to create a condensed version. This typically takes a few minutes.
+    </p>
+    <div className="space-y-2">
+      <div className="text-sm text-gray-400">While you wait, you can:</div>
+      <button
+        onClick={onSwitchView}
+        className="w-full px-4 py-2 bg-blue-500 hover:bg-blue-600 text-white rounded-md transition-colors text-sm font-medium flex items-center justify-center gap-2"
+      >
+        <BookOpenCheck className="w-4 h-4" />
+        Read the Original PDF
+      </button>
+    </div>
+  </div>
+);
+
+// Add these new helper functions near the top of the component
+const getChapterProgress = (rect: DOMRect, viewportHeight: number) => {
+  // Calculate how far we've scrolled through the chapter
+  const totalHeight = rect.height;
+  const scrolledAmount = -rect.top;
+  const progress = Math.max(0, Math.min(1, scrolledAmount / (totalHeight - viewportHeight)));
+  return progress;
+};
+
+const getPageNumberFromProgress = (chapter: Book['chapters'][0], progress: number) => {
+  const pages = chapter.content.original;
+  const minPage = Math.min(...pages);
+  const maxPage = Math.max(...pages);
+  const totalPages = maxPage - minPage + 1;
+  
+  // Calculate the current page based on progress
+  const currentPage = Math.min(
+    maxPage,
+    Math.max(
+      minPage,
+      Math.floor(minPage + (progress * totalPages))
+    )
+  );
+  
+  return currentPage;
+};
+
 export default function Reader({ book }: ReaderProps) {
   const [visiblePages, setVisiblePages] = useState<number[]>([1]);
   const [fontSize, setFontSize] = useState("text-base");
@@ -300,6 +355,34 @@ export default function Reader({ book }: ReaderProps) {
 
   const [isDocumentReady, setIsDocumentReady] = useState(false);
 
+  const [lastSavedProgress, setLastSavedProgress] = useState<number>(1);
+
+  const [initialProgress, setInitialProgress] = useState<number | null>(null);
+
+  const updateBookProgress = useCallback(
+    async (currentPage: number) => {
+      if (currentPage === lastSavedProgress || currentPage === 1) return;
+
+      try {
+        console.log(`Updating book progress to ${currentPage}`);
+        await api.setBookProgress(book.id, {
+          progress: currentPage,
+        });
+        setLastSavedProgress(currentPage);
+      } catch (error) {
+        console.error("Failed to update book progress:", error);
+      }
+    },
+    [api, book.id, lastSavedProgress]
+  );
+
+  const opt = useMemo(() => {
+    return {
+      cMapUrl: "/bcmaps/",
+      cMapPacked: true,
+    };
+  }, []);
+
   const renderSidebarContent = () => {
     const getPdfOutline = () => {
       if (!pdfOutline) {
@@ -310,6 +393,7 @@ export default function Reader({ book }: ReaderProps) {
               onDocumentLoadSuccess(pdf);
             }}
             loading={<div className="text-white">Loading outline...</div>}
+            options={opt}
           >
             <Outline
               className={clsx(
@@ -344,38 +428,65 @@ export default function Reader({ book }: ReaderProps) {
         </div>
 
         <div className={currentView === "condensed" ? "block" : "hidden"}>
-          <div className="space-y-4">
-            {book.chapters.map((chapter, index) => (
-              <div key={chapter.id} className="px-4">
-                <button
-                  onClick={() => {
-                    setActiveChapterId(chapter.id);
-                    const chapterElement = document.querySelector(
-                      `[data-chapter="${chapter.id}"]`
-                    );
-                    if (chapterElement) {
-                      chapterElement.scrollIntoView({
-                        behavior: "smooth",
-                        block: "start",
-                      });
-                    }
-                  }}
-                  className={clsx(
-                    "text-left w-full p-2 rounded hover:bg-gray-700 transition-colors",
-                    visibleChapterIds.includes(String(chapter.id))
-                      ? "bg-blue-600 text-white"
-                      : "text-gray-300"
-                  )}
-                >
-                  <span className="text-sm font-medium">{chapter.title}</span>
-                  <div className="text-xs text-gray-400 mt-1">
-                    Source: Pages {Math.min(...chapter.content.original)} -{" "}
-                    {Math.max(...chapter.content.original)}
+          {book.isProcessing ? (
+            <div className="p-6">
+              <div className="bg-gray-800 rounded-lg p-4 border border-gray-700">
+                <div className="flex items-center gap-3 mb-3">
+                  <div className="relative">
+                    <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-blue-500"></div>
+                    <Sparkles className="w-3 h-3 text-blue-400 absolute inset-1" />
                   </div>
+                  <span className="text-sm font-medium text-white">
+                    Processing Book
+                  </span>
+                </div>
+                <p className="text-xs text-gray-400 leading-relaxed">
+                  SuperReaderAI is analyzing your book to create a condensed
+                  version. You can read the original PDF while waiting.
+                </p>
+                <button
+                  onClick={() => setCurrentView("original")}
+                  className="mt-3 w-full px-3 py-1.5 bg-gray-700 hover:bg-gray-600 text-gray-300 rounded text-xs font-medium transition-colors flex items-center justify-center gap-1.5"
+                >
+                  <BookOpenCheck className="w-3 h-3" />
+                  Switch to Original
                 </button>
               </div>
-            ))}
-          </div>
+            </div>
+          ) : (
+            <div className="space-y-4">
+              {book.chapters.map((chapter, index) => (
+                <div key={chapter.id} className="px-4">
+                  <button
+                    onClick={() => {
+                      setActiveChapterId(chapter.id);
+                      const chapterElement = document.querySelector(
+                        `[data-chapter="${chapter.id}"]`
+                      );
+                      if (chapterElement) {
+                        chapterElement.scrollIntoView({
+                          behavior: "smooth",
+                          block: "start",
+                        });
+                      }
+                    }}
+                    className={clsx(
+                      "text-left w-full p-2 rounded hover:bg-gray-700 transition-colors",
+                      visibleChapterIds.includes(String(chapter.id))
+                        ? "bg-blue-600 text-white"
+                        : "text-gray-300"
+                    )}
+                  >
+                    <span className="text-sm font-medium">{chapter.title}</span>
+                    <div className="text-xs text-gray-400 mt-1">
+                      Source: Pages {Math.min(...chapter.content.original)} -{" "}
+                      {Math.max(...chapter.content.original)}
+                    </div>
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
       </>
     );
@@ -398,17 +509,14 @@ export default function Reader({ book }: ReaderProps) {
       <div className="w-full">
         <div
           className={clsx(
-            "w-full relative",
+            "w-full relative max-w-4xl mx-auto",
             currentView === "original" ? "block" : "hidden"
           )}
           ref={contentContainerRef}
         >
           <Document
             file={book.pdfUrl}
-            onLoadSuccess={(pdf) => {
-              onDocumentLoadSuccess(pdf);
-              setIsPdfLoaded(true);
-            }}
+            onLoadSuccess={onDocumentLoadSuccess}
             onLoadError={(error) =>
               console.error("Error loading document:", error)
             }
@@ -427,6 +535,7 @@ export default function Reader({ book }: ReaderProps) {
                 </div>
               </div>
             }
+            options={opt}
           >
             {isDocumentReady &&
               Array.from(new Array(numPages), (_, index) => {
@@ -440,7 +549,6 @@ export default function Reader({ book }: ReaderProps) {
                     className="mb-4"
                   >
                     <Page
-                      key={`page_${pageNumber}`}
                       pageNumber={pageNumber}
                       width={Math.min(800, window.innerWidth - 48)}
                       className="pdf-page"
@@ -511,113 +619,126 @@ export default function Reader({ book }: ReaderProps) {
 
         <div
           className={clsx(
-            "max-w-4xl mx-auto",
+            "max-w-4xl mx-auto p-4",
             currentView === "condensed" ? "block" : "hidden"
           )}
         >
-          {book.chapters.map((chapter, index) => (
-            <div
-              key={chapter.id}
-              className={clsx(
-                "mb-6 p-6 bg-gray-800 rounded-lg shadow-lg",
-                visibleChapterIds.includes(String(chapter.id)) &&
-                  "ring-2 ring-blue-500",
-                "transition-all duration-200"
-              )}
-              data-page={chapter.content.condensed}
-              data-chapter={String(chapter.id)}
-            >
-              <h3 className="text-xl font-semibold text-white mb-3 flex items-center gap-2">
-                {chapter.title}
-                {visibleChapterIds.includes(String(chapter.id)) && (
-                  <ArrowRight className="w-5 h-5 text-blue-500 animate-pulse" />
+          {book.isProcessing ? (
+            <div className="flex items-center justify-center min-h-[60vh]">
+              <ProcessingStatus
+                onSwitchView={() => setCurrentView("original")}
+              />
+            </div>
+          ) : (
+            book.chapters.map((chapter, index) => (
+              <div
+                key={chapter.id}
+                className={clsx(
+                  "mb-6 p-6 bg-gray-800 rounded-lg shadow-lg",
+                  visibleChapterIds.includes(String(chapter.id)) &&
+                    "ring-2 ring-blue-500",
+                  "transition-all duration-200"
                 )}
-              </h3>
-
-              {!distilledContent[chapter.id]?.content && (
-                <button
-                  onClick={() => fetchDistilledContent(chapter)}
-                  disabled={distilledContent[chapter.id]?.isLoading}
-                  className={clsx(
-                    "flex items-center gap-2 px-4 py-2 rounded",
-                    "bg-blue-500 hover:bg-blue-600 disabled:bg-blue-400",
-                    "text-white text-sm font-medium transition-colors"
+                data-page={chapter.content.condensed}
+                data-chapter={String(chapter.id)}
+              >
+                <h3 className="text-xl font-semibold text-white mb-3 flex items-center gap-2">
+                  {chapter.title}
+                  {visibleChapterIds.includes(String(chapter.id)) && (
+                    <ArrowRight className="w-5 h-5 text-blue-500 animate-pulse" />
                   )}
-                >
-                  {distilledContent[chapter.id]?.isLoading ? (
-                    <>
-                      <Loader2 className="w-4 h-4 animate-spin" />
-                      Loading...
-                    </>
-                  ) : (
-                    "Load Distilled Content"
-                  )}
-                </button>
-              )}
+                </h3>
 
-              {distilledContent[chapter.id]?.error && (
-                <div className="text-red-400 text-sm mt-2">
-                  {distilledContent[chapter.id].error}
-                </div>
-              )}
+                {!distilledContent[chapter.id]?.content && (
+                  <button
+                    onClick={() => fetchDistilledContent(chapter)}
+                    disabled={distilledContent[chapter.id]?.isLoading}
+                    className={clsx(
+                      "flex items-center gap-2 px-4 py-2 rounded",
+                      "bg-blue-500 hover:bg-blue-600 disabled:bg-blue-400",
+                      "text-white text-sm font-medium transition-colors"
+                    )}
+                  >
+                    {distilledContent[chapter.id]?.isLoading ? (
+                      <>
+                        <Loader2 className="w-4 h-4 animate-spin" />
+                        Loading...
+                      </>
+                    ) : (
+                      "Load Distilled Content"
+                    )}
+                  </button>
+                )}
 
-              {distilledContent[chapter.id]?.content && (
-                <div className="mt-4 p-4 bg-gray-700 rounded">
-                  <div className="prose prose-invert max-w-none space-y-6">
-                    {distilledContent[
-                      chapter.id
-                    ]?.content?.distilled_page.paragraphs.map(
-                      (paragraph, index) => {
-                        const paragraphId = `${chapter.id}-paragraph-${index}`;
+                {distilledContent[chapter.id]?.error && (
+                  <div className="text-red-400 text-sm mt-2">
+                    {distilledContent[chapter.id].error}
+                  </div>
+                )}
 
-                        return (
-                          <div
-                            key={index}
-                            id={paragraphId}
-                            onClick={() => {
-                              setLastClickedParagraphId(paragraphId);
-                              setCurrentView("original");
-                              const startPage = paragraph.pages[0];
-                              setTimeout(() => {
-                                scrollToPage(startPage);
-                              }, 100);
-                            }}
-                            className={clsx(
-                              "relative cursor-pointer hover:bg-gray-600/30 transition-colors p-2 rounded",
-                              paragraph.type === "core" &&
-                                "pl-4 border-l-2 border-blue-500",
-                              paragraph.type === "transition" &&
-                                "pr-4 border-r-2 border-emerald-500/50 italic text-right"
-                            )}
-                          >
+                {distilledContent[chapter.id]?.content && (
+                  <div className="mt-4 p-4 bg-gray-700 rounded">
+                    <div className="prose prose-invert max-w-none space-y-6">
+                      {distilledContent[
+                        chapter.id
+                      ]?.content?.distilled_page.paragraphs.map(
+                        (paragraph, index) => {
+                          const paragraphId = `${chapter.id}-paragraph-${index}`;
+
+                          return (
                             <div
+                              key={index}
+                              id={paragraphId}
+                              onClick={() => {
+                                if (paragraph.type !== "transition") {
+                                  setLastClickedParagraphId(paragraphId);
+                                  setCurrentView("original");
+                                  const startPage = paragraph.pages[0];
+                                  setTimeout(() => {
+                                    scrollToPage(startPage);
+                                  }, 100);
+                                }
+                              }}
                               className={clsx(
+                                "relative p-2 rounded",
+                                paragraph.type !== "transition" &&
+                                  "cursor-pointer hover:bg-gray-600/30",
                                 "transition-colors",
-                                paragraph.type === "core" && "text-gray-100",
+                                paragraph.type === "core" &&
+                                  "pl-4 border-l-2 border-blue-500",
                                 paragraph.type === "transition" &&
-                                  "text-gray-400"
+                                  "pr-4 border-r-2 border-emerald-500/50 italic text-right"
                               )}
                             >
-                              {paragraph.content}
-                            </div>
+                              <div
+                                className={clsx(
+                                  "transition-colors",
+                                  paragraph.type === "core" && "text-gray-100",
+                                  paragraph.type === "transition" &&
+                                    "text-gray-400"
+                                )}
+                              >
+                                {paragraph.content}
+                              </div>
 
-                            {paragraph.type === "core" &&
-                              paragraph.pages.length > 0 && (
-                                <div className="mt-2 text-xs text-gray-500">
-                                  Source: Page
-                                  {paragraph.pages.length > 1 ? "s" : ""}{" "}
-                                  {paragraph.pages.join(", ")}
-                                </div>
-                              )}
-                          </div>
-                        );
-                      }
-                    )}
+                              {paragraph.type === "core" &&
+                                paragraph.pages.length > 0 && (
+                                  <div className="mt-2 text-xs text-gray-500">
+                                    Source: Page
+                                    {paragraph.pages.length > 1 ? "s" : ""}{" "}
+                                    {paragraph.pages.join(", ")}
+                                  </div>
+                                )}
+                            </div>
+                          );
+                        }
+                      )}
+                    </div>
                   </div>
-                </div>
-              )}
-            </div>
-          ))}
+                )}
+              </div>
+            ))
+          )}
         </div>
       </div>
     );
@@ -848,24 +969,42 @@ export default function Reader({ book }: ReaderProps) {
       (entries) => {
         entries.forEach((entry) => {
           const chapterId = entry.target.getAttribute("data-chapter");
+          const chapterElement = entry.target as HTMLElement;
+          const rect = chapterElement.getBoundingClientRect();
+          const viewportHeight = window.innerHeight;
 
           if (chapterId) {
             setVisibleChapterIds((prev) => {
+              // For tall chapters, we want to track them even if they're partially visible
               if (entry.isIntersecting) {
-                // Add chapter ID if not already present
-                return prev.includes(chapterId) ? prev : [...prev, chapterId];
-              } else {
-                // Remove chapter ID when no longer visible
-                return prev.filter((id) => id !== chapterId);
+                // If the chapter is taller than viewport, we'll always include it
+                if (rect.height > viewportHeight) {
+                  return prev.includes(chapterId) ? prev : [...prev, chapterId];
+                }
+
+                // For smaller chapters, use the 40% threshold
+                const visiblePercentage =
+                  Math.min(
+                    (viewportHeight -
+                      Math.max(0, -rect.top) -
+                      Math.max(0, rect.bottom - viewportHeight)) /
+                      rect.height,
+                    1
+                  ) * 100;
+
+                if (visiblePercentage >= 40) {
+                  return prev.includes(chapterId) ? prev : [...prev, chapterId];
+                }
               }
+              return prev.filter((id) => id !== chapterId);
             });
           }
         });
       },
       {
         root: contentRef.current,
-        threshold: 0.3,
-        rootMargin: "-10% 0px -10% 0px", // Adjusted to be more balanced
+        threshold: [0, 0.2, 0.4, 0.6, 0.8, 1.0],
+        rootMargin: "-10% 0px -10% 0px",
       }
     );
 
@@ -891,8 +1030,15 @@ export default function Reader({ book }: ReaderProps) {
 
     if (visibleChapters.length === 0) return 1;
 
+    // If we're between chapters (only one chapter is partially visible),
+    // use the first page of that chapter
+    if (visibleChapters.length === 1) {
+      return Math.min(...visibleChapters[0].content.original);
+    }
+
     // Get the last visible chapter
     const lastVisibleChapter = visibleChapters[visibleChapters.length - 1];
+
     // Return the highest page number from that chapter
     return Math.max(...lastVisibleChapter.content.original);
   }, [visibleChapterIds, book.chapters]);
@@ -983,6 +1129,8 @@ export default function Reader({ book }: ReaderProps) {
   }, [currentView]);
 
   const getProgressPercentage = () => {
+    if (!book.chapters.length) return 0;
+
     const totalPages = Math.max(
       ...book.chapters[book.chapters.length - 1].content.original
     );
@@ -993,11 +1141,144 @@ export default function Reader({ book }: ReaderProps) {
         : lastKnownPage;
       return (currentPage / totalPages) * 100;
     } else {
-      // Condensed view progress calculation
       const lastVisibleChapterEndPage = getLastVisibleChapterEndPage();
       return (lastVisibleChapterEndPage / totalPages) * 100;
     }
   };
+
+  useEffect(() => {
+    // Skip if not in condensed view
+    if (currentView !== "condensed") return;
+
+    const getCurrentPage = () => {
+      if (!visibleChapterIds.length) return 1;
+
+      const visibleChapters = book.chapters.filter((chapter) =>
+        visibleChapterIds.includes(String(chapter.id))
+      );
+
+      if (visibleChapters.length === 0) return 1;
+
+      // Get the most visible chapter element
+      const mostVisibleChapter = visibleChapters[visibleChapters.length - 1];
+      const chapterElement = document.querySelector(
+        `[data-chapter="${mostVisibleChapter.id}"]`
+      ) as HTMLElement;
+
+      if (chapterElement) {
+        const rect = chapterElement.getBoundingClientRect();
+        const viewportHeight = window.innerHeight;
+
+        // If chapter is taller than viewport, calculate progress through it
+        if (rect.height > viewportHeight) {
+          const progress = getChapterProgress(rect, viewportHeight);
+          return getPageNumberFromProgress(mostVisibleChapter, progress);
+        }
+
+        // For shorter chapters, use the original logic
+        return Math.max(...mostVisibleChapter.content.original);
+      }
+
+      return Math.min(...mostVisibleChapter.content.original);
+    };
+
+    const intervalId = setInterval(() => {
+      const currentPage = getCurrentPage();
+      updateBookProgress(currentPage);
+    }, 1000);
+
+    return () => clearInterval(intervalId);
+  }, [currentView, visibleChapterIds, book.chapters, updateBookProgress]);
+
+  const getDisplayPage = () => {
+    if (currentView === "original") {
+      return visibleContentSegments.length
+        ? Math.max(...visibleContentSegments)
+        : lastKnownPage;
+    } else {
+      if (!visibleChapterIds.length) return 1;
+
+      const visibleChapters = book.chapters.filter((chapter) =>
+        visibleChapterIds.includes(String(chapter.id))
+      );
+
+      if (visibleChapters.length === 0) return 1;
+
+      // Get the most visible chapter element
+      const mostVisibleChapter = visibleChapters[visibleChapters.length - 1];
+      const chapterElement = document.querySelector(
+        `[data-chapter="${mostVisibleChapter.id}"]`
+      ) as HTMLElement;
+
+      if (chapterElement) {
+        const rect = chapterElement.getBoundingClientRect();
+        const viewportHeight = window.innerHeight;
+
+        // If chapter is taller than viewport, calculate progress through it
+        if (rect.height > viewportHeight) {
+          const progress = getChapterProgress(rect, viewportHeight);
+          return getPageNumberFromProgress(mostVisibleChapter, progress);
+        }
+
+        // For shorter chapters, use the original logic
+        return Math.max(...mostVisibleChapter.content.original);
+      }
+
+      return Math.min(...mostVisibleChapter.content.original);
+    }
+  };
+
+  useEffect(() => {
+    // Reset states when book changes
+    setIsDocumentReady(false);
+    setNumPages(0);
+  }, [book.pdfUrl]);
+
+  useEffect(() => {
+    const handleInitialScroll = async () => {
+      // Get progress from URL query parameter
+      const urlParams = new URLSearchParams(window.location.search);
+      const progress = parseInt(urlParams.get("progress") || "1");
+
+      if (progress > 1) {
+        setInitialProgress(progress);
+
+        // Find the chapter containing this page
+        const targetChapter = book.chapters.find((chapter) => {
+          const chapterPages = chapter.content.original;
+          return (
+            progress >= Math.min(...chapterPages) &&
+            progress <= Math.max(...chapterPages)
+          );
+        });
+
+        if (targetChapter) {
+          // If we're in condensed view, scroll to the chapter
+          if (currentView === "condensed") {
+            setActiveChapterId(targetChapter.id);
+            setTimeout(() => {
+              const chapterElement = document.querySelector(
+                `[data-chapter="${targetChapter.id}"]`
+              );
+              if (chapterElement) {
+                chapterElement.scrollIntoView({
+                  behavior: "smooth",
+                  block: "start",
+                });
+              }
+            }, 100);
+          } else {
+            // If we're in original view, scroll to the specific page
+            setTimeout(() => {
+              scrollToPage(progress);
+            }, 100);
+          }
+        }
+      }
+    };
+
+    handleInitialScroll();
+  }, [book.chapters, currentView, scrollToPage]);
 
   return (
     <div className="flex bg-gray-900 overflow-hidden">
@@ -1058,27 +1339,7 @@ export default function Reader({ book }: ReaderProps) {
                   {book.title}
                 </h2>
                 <div className="text-sm text-gray-400">
-                  {currentView === "original"
-                    ? `Page ${
-                        visibleContentSegments.length
-                          ? Math.max(...visibleContentSegments)
-                          : lastKnownPage
-                      } of ${lastPageNumber}`
-                    : `Page ${
-                        visibleChapterIds.length
-                          ? Math.max(
-                              ...(book.chapters.find(
-                                (ch) =>
-                                  ch.id ===
-                                  parseInt(
-                                    visibleChapterIds[
-                                      visibleChapterIds.length - 1
-                                    ]
-                                  )
-                              )?.content.original || [1])
-                            )
-                          : 1
-                      } of ${lastPageNumber}`}
+                  Page {getDisplayPage()} of {lastPageNumber}
                 </div>
               </div>
             </div>

@@ -50,6 +50,11 @@ function createPageToSectionMap(sections: any[]): Record<number, PageMapping> {
   return mapping;
 }
 
+// Add this helper function to check if content sections are ready
+function isBookProcessingContent(contentSections: any[]) {
+  return !contentSections || contentSections.length === 0;
+}
+
 export default function ReaderPage({ params }: Props) {
   const [bookData, setBookData] = useState<Book | null>(null);
   const [error, setError] = useState<boolean>(false);
@@ -89,6 +94,16 @@ export default function ReaderPage({ params }: Props) {
           coverUrl: "/placeholder-cover.jpg",
           pdfUrl: bookResponse.download_url,
           chapters: [],
+          isProcessing: isBookProcessingContent(
+            contentSectionsResponse.content_sections
+          ),
+          type: "pdf",
+          user_id: "", // Add required fields from Book type
+          is_uploaded: true,
+          progress: 0,
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+          status: "active",
         };
 
         let cachedMetadata = await api.getAppConfig(
@@ -110,29 +125,36 @@ export default function ReaderPage({ params }: Props) {
             ...initialBookData,
             title: metadata.info?.Title || "Untitled Document",
             author: metadata.info?.Author || "Unknown Author",
-            chapters: contentSectionsResponse.content_sections.map(
-              (section, index) => ({
-                id: index,
-                title: `Chapter ${index + 1}`,
-                content: {
-                  original: Array.from(
-                    { length: section.end_page - section.start_page + 1 },
-                    (_, i) => section.start_page + i
-                  ),
-                  condensed: index + 1,
-                  quick: [],
-                },
-                estimatedReadTime: {
-                  original: section.end_page - section.start_page + 1,
-                  condensed: 1,
-                  quick: null,
-                },
-                totalPages: {
-                  original: section.end_page - section.start_page + 1,
-                  condensed: 1,
-                  quick: null,
-                },
-              })
+            chapters: isBookProcessingContent(
+              contentSectionsResponse.content_sections
+            )
+              ? []
+              : contentSectionsResponse.content_sections.map(
+                  (section, index) => ({
+                    id: index,
+                    title: `Chapter ${index + 1}`,
+                    content: {
+                      original: Array.from(
+                        { length: section.end_page - section.start_page + 1 },
+                        (_, i) => section.start_page + i
+                      ),
+                      condensed: index + 1,
+                      quick: [],
+                    },
+                    estimatedReadTime: {
+                      original: section.end_page - section.start_page + 1,
+                      condensed: 1,
+                      quick: null,
+                    },
+                    totalPages: {
+                      original: section.end_page - section.start_page + 1,
+                      condensed: 1,
+                      quick: null,
+                    },
+                  })
+                ),
+            isProcessing: isBookProcessingContent(
+              contentSectionsResponse.content_sections
             ),
           };
 

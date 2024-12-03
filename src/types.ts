@@ -64,5 +64,33 @@ export interface Book {
   author: string;
   coverUrl: string;
   pdfUrl: string;
-  chapters: Chapter[];
+  chapters: Array<{
+    id: number;
+    title: string;
+    content: {
+      original: number[];
+      condensed: number;
+      quick: number[];
+    };
+    estimatedReadTime: {
+      original: number;
+      condensed: number;
+      quick: number | null;
+    };
+    totalPages: {
+      original: number;
+      condensed: number;
+      quick: number | null;
+    };
+  }>;
+  isProcessing?: boolean;
+  type: string;
+  user_id: string;
+  is_uploaded: boolean;
+  progress: number;
+  created_at: string;
+  updated_at: string;
+  status: string;
+  compression_ratio: number;
+  total_page: number;
 }

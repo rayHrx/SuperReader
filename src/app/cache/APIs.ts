@@ -17,7 +17,8 @@ import {
   GetBooksResponse,
   CheckInResponse,
   DailyCheckIn,
-  GetLastNCheckInResponse
+  GetLastNCheckInResponse,
+  SetBookProgressRequest
 } from './Interfaces';
 import { defineCustomElements as jeepSqlite } from 'jeep-sqlite/loader';
 import { getAuth } from 'firebase/auth';
@@ -119,9 +120,17 @@ export class APIs {
     return response as BookResponse;
   }
 
-  async setBookUploaded(bookId: string): Promise<void> {
-    await this.fetchFromAPI('/book/${bookId}', {
+  async setBookUploaded(bookId: string, request?: SetBookUploadedRequest): Promise<void> {
+    await this.fetchFromAPI(`/book/${bookId}`, {
       method: 'PATCH',
+      body: request ? JSON.stringify(request) : undefined,
+    });
+  }
+
+  async setBookProgress(bookId: string, request?: SetBookProgressRequest): Promise<void> {
+    await this.fetchFromAPI(`/book/${bookId}`, {
+      method: 'PATCH',
+      body: request ? JSON.stringify(request) : undefined,
     });
   }
 
@@ -227,7 +236,7 @@ export class APIs {
     const response = await this.cacheController.getData(
       'all_books',
       () => this.fetchFromAPI<GetBooksResponse>('/book'),
-      5 * 60 * 1000 // Cache for 5 minutes
+      1 // No cache
     );
     return response as GetBooksResponse;
   }

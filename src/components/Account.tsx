@@ -1,6 +1,6 @@
 'use client';
 
-import React from 'react';
+import React, { useEffect, useState } from "react";
 import {
   Settings,
   Bell,
@@ -16,19 +16,241 @@ import {
   Clock,
 } from "lucide-react";
 import { useAuth } from "@/lib/AuthContext";
-import { auth } from "@/lib/firebase";
+import { auth, db, functions } from "@/lib/firebase";
 import { useRouter } from "next/navigation";
+import {
+  collection,
+  doc,
+  onSnapshot,
+  query,
+  where,
+  addDoc,
+  getDocs,
+  DocumentData,
+  QueryDocumentSnapshot,
+} from "firebase/firestore";
+import { httpsCallable } from "firebase/functions";
 
-interface MenuItem {
-  icon: React.ReactNode;
-  label: string;
+interface Price {
+  id: string;
+  currency: string;
+  unit_amount: number;
+  interval?: string;
+  type?: string;
+  recurring?: {
+    usage_type?: string;
+  };
+}
+
+interface Product {
+  id: string;
+  name: string;
   description?: string;
-  onClick: () => void;
+  images: string[];
+  prices: Price[];
+}
+
+interface Subscription {
+  status: string;
+  current_period_end: number;
+  price: {
+    get: () => Promise<{ data: () => Price }>;
+  };
 }
 
 export default function Account() {
   const { user } = useAuth();
   const router = useRouter();
+  const [subscriptions, setSubscriptions] = useState<Subscription[]>([]);
+  const [prices, setPrices] = useState<{ [key: string]: Price }>({});
+  const [products, setProducts] = useState<Product[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [selectedPrice, setSelectedPrice] = useState<string>("");
+
+  useEffect(() => {
+    if (!user) {
+      console.log("No user found, skipping subscription and product fetch");
+      return;
+    }
+
+    console.log("Starting subscription listener for user:", user.uid);
+
+    // Listen to subscriptions
+    const subscriptionsRef = collection(
+      db,
+      "customers",
+      user.uid,
+      "subscriptions"
+    );
+    console.log("Subscription path:", `customers/${user.uid}/subscriptions`);
+
+    const q = query(
+      subscriptionsRef,
+      where("status", "in", ["trialing", "active"])
+    );
+
+    const unsubscribe = onSnapshot(
+      q,
+      (snapshot) => {
+        console.log("Subscription snapshot received:", {
+          empty: snapshot.empty,
+          size: snapshot.size,
+          docs: snapshot.docs.map((d) => d.id),
+        });
+
+        const subs = snapshot.docs.map((doc) => doc.data() as Subscription);
+        console.log("Parsed subscriptions:", subs);
+        setSubscriptions(subs);
+        setLoading(false);
+      },
+      (error) => {
+        console.error("Subscription listener error:", {
+          code: error.code,
+          message: error.message,
+          details: error,
+        });
+        setLoading(false);
+      }
+    );
+
+    // Fetch products and prices
+    const fetchProducts = async () => {
+      try {
+        console.log("Starting products fetch");
+        const productsRef = collection(db, "products");
+        const productsQuery = query(productsRef, where("active", "==", true));
+
+        console.log("Fetching products...");
+        const querySnapshot = await getDocs(productsQuery);
+        console.log("Products snapshot received:", {
+          empty: querySnapshot.empty,
+          size: querySnapshot.size,
+          docs: querySnapshot.docs.map((d) => ({
+            id: d.id,
+            exists: d.exists(),
+            data: d.data(),
+          })),
+        });
+
+        const productsData: Product[] = [];
+        const pricesData: { [key: string]: Price } = {};
+
+        for (const doc of querySnapshot.docs) {
+          console.log("Processing product:", doc.id);
+          const product = doc.data();
+
+          console.log("Fetching prices for product:", doc.id);
+          const priceSnap = await getDocs(
+            query(collection(doc.ref, "prices"), where("active", "==", true))
+          );
+
+          console.log("Prices snapshot for product", doc.id, ":", {
+            empty: priceSnap.empty,
+            size: priceSnap.size,
+            prices: priceSnap.docs.map((p) => ({
+              id: p.id,
+              data: p.data(),
+            })),
+          });
+
+          const prices = priceSnap.docs.map(
+            (price) =>
+              ({
+                id: price.id,
+                ...price.data(),
+              } as Price)
+          );
+
+          prices.forEach((price) => {
+            pricesData[price.id] = price;
+          });
+
+          productsData.push({
+            id: doc.id,
+            ...product,
+            prices,
+          } as Product);
+        }
+
+        console.log("Final processed data:", {
+          products: productsData,
+          prices: pricesData,
+        });
+
+        setProducts(productsData);
+        setPrices(pricesData);
+      } catch (error: any) {
+        console.error("Error fetching products:", {
+          code: error.code,
+          message: error.message,
+          details: error,
+        });
+
+        // Additional debugging for specific error types
+        if (error.code === "permission-denied") {
+          console.log("Permission denied. Current security rules:", {
+            path: error.path,
+            requiredAccess: error.requiredAccess,
+          });
+        }
+      }
+    };
+
+    fetchProducts();
+    return () => {
+      console.log("Cleaning up subscription listener");
+      unsubscribe();
+    };
+  }, [user]);
+
+  const handleSubscribe = async (priceId: string) => {
+    if (!user) return;
+
+    const checkoutSession = {
+      automatic_tax: true,
+      tax_id_collection: true,
+      collect_shipping_address: true,
+      allow_promotion_codes: true,
+      line_items: [
+        {
+          price: priceId,
+          quantity: 1,
+        },
+      ],
+      success_url: window.location.origin,
+      cancel_url: window.location.origin,
+    };
+
+    const sessionsRef = collection(
+      db,
+      "customers",
+      user.uid,
+      "checkout_sessions"
+    );
+    const docRef = await addDoc(sessionsRef, checkoutSession);
+
+    // Wait for the CheckoutSession to get attached
+    onSnapshot(docRef, (snap) => {
+      const { error, url } = snap.data() as any;
+      if (error) {
+        alert(`An error occurred: ${error.message}`);
+      }
+      if (url) {
+        window.location.assign(url);
+      }
+    });
+  };
+
+  const handleBillingPortal = async () => {
+    const createPortalLink = httpsCallable(
+      functions,
+      "ext-firestore-stripe-subscriptions-createPortalLink"
+    );
+    const { data } = await createPortalLink({
+      returnUrl: window.location.origin,
+    });
+    window.location.assign((data as any).url);
+  };
 
   const handleLogout = async () => {
     try {
@@ -99,27 +321,83 @@ export default function Account() {
                 <CreditCard className="w-5 h-5" />
                 Subscription Status
               </h2>
-              <div className="space-y-4">
-                <div className="flex justify-between items-center p-4 bg-gray-700 rounded-lg">
-                  <div>
-                    <p className="text-gray-300">Current Plan</p>
-                    <p className="text-white font-medium">Pro Membership</p>
-                  </div>
-                  <span className="px-3 py-1 bg-green-500/10 text-green-400 rounded-full text-sm">
-                    Active
-                  </span>
+
+              {loading ? (
+                <div className="text-gray-400">
+                  Loading subscription details...
                 </div>
-                <div className="flex justify-between items-center p-4 bg-gray-700 rounded-lg">
-                  <div>
-                    <p className="text-gray-300">Next Billing Date</p>
-                    <p className="text-white font-medium">December 31, 2024</p>
-                  </div>
-                  <Clock className="w-5 h-5 text-gray-400" />
+              ) : subscriptions.length > 0 ? (
+                <div className="space-y-4">
+                  {subscriptions.map((sub, index) => (
+                    <div
+                      key={index}
+                      className="flex justify-between items-center p-4 bg-gray-700 rounded-lg"
+                    >
+                      <div>
+                        <p className="text-gray-300">Current Plan</p>
+                        <p className="text-white font-medium">{sub.status}</p>
+                        <p className="text-sm text-gray-400">
+                          Next billing date:{" "}
+                          {new Date(
+                            sub.current_period_end * 1000
+                          ).toLocaleDateString()}
+                        </p>
+                      </div>
+                      <button
+                        onClick={handleBillingPortal}
+                        className="px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600"
+                      >
+                        Manage Subscription
+                      </button>
+                    </div>
+                  ))}
                 </div>
-              </div>
-              <button className="mt-4 text-blue-400 hover:text-blue-300 text-sm font-medium">
-                View Billing History →
-              </button>
+              ) : (
+                <div className="space-y-4">
+                  <div className="p-4 bg-gray-700 rounded-lg">
+                    <p className="text-gray-300 mb-4">
+                      Choose a subscription plan:
+                    </p>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      {products.map((product) => (
+                        <div
+                          key={product.id}
+                          className="p-4 border border-gray-600 rounded-lg"
+                        >
+                          <h3 className="text-white font-medium mb-2">
+                            {product.name}
+                          </h3>
+                          <p className="text-gray-400 text-sm mb-4">
+                            {product.description}
+                          </p>
+                          <select
+                            className="w-full p-2 bg-gray-600 text-white rounded-lg mb-4"
+                            onChange={(e) => setSelectedPrice(e.target.value)}
+                          >
+                            <option value="">Select a plan</option>
+                            {product.prices.map((price: any) => (
+                              <option key={price.id} value={price.id}>
+                                {new Intl.NumberFormat("en-US", {
+                                  style: "currency",
+                                  currency: price.currency,
+                                }).format(price.unit_amount / 100)}{" "}
+                                / {price.interval || "one-time"}
+                              </option>
+                            ))}
+                          </select>
+                          <button
+                            onClick={() => handleSubscribe(selectedPrice)}
+                            disabled={!selectedPrice}
+                            className="w-full px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 disabled:bg-gray-500"
+                          >
+                            Subscribe
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              )}
             </div>
 
             {/* Recent Activity */}

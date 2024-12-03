@@ -8,7 +8,12 @@ export interface PostBookResponse {
 }
 
 export interface SetBookUploadedRequest {
-  book_id: string;
+  is_uploaded?: boolean;
+  title?: string;
+}
+
+export interface SetBookProgressRequest {
+  progress: number;
 }
 
 export interface ValidationError {
